@@ -12,92 +12,228 @@ import random
 import xml.etree.ElementTree as ET
 
 
-def getFilelist(originpath, ftyp, deep = False, order = True):
-    out   = []
-    if deep == False:
-        files = os.listdir(originpath)
-        for i in files:
-            if i.split('.')[-1] in ftyp:
-                if originpath.endswith('/'):
-                    out.append(originpath + i)
-                else:
-                    out.append(originpath + '/' + i)
-            # else:
-            #     print("non-matching file - {} - found".format(i.split('.')[-1]))
-    else:
-        for path, subdirs, files in os.walk(originpath):
-            for i in files:
-                if i.split('.')[-1] in ftyp:
-                    out.append(os.path.join(path, i))
-    if order == True:
-        out = sorted(out)
-    return out
+#####################################################################################
+#####################################################################################
+################## For deep leaner, mainly from feevos' repo ########################
+#####################################################################################
+##################################################################################### 
 
+class AI4BNormal_S2(object):
+    """
+    class for Normalization of images, per channel, in format CHW 
+    """
+    def __init__(self):
 
-def plotter(array, row=1, col=1, names=False, title=False):
+        self._mean_s2 = np.array([5.4418573e+02, 7.6761194e+02, 7.1712860e+02, 2.8561428e+03 ]).astype(np.float32) 
+        self._std_s2  = np.array( [3.7141626e+02, 3.8981952e+02, 4.7989127e+02 ,9.5173022e+02]).astype(np.float32) 
 
-    # Plot the slices
-    fig, axes = plt.subplots(row, col, figsize=(col*5, row*5), constrained_layout=False)  # 4 slices
-    # Create a colormap
-    cmap = plt.cm.viridis
+    def __call__(self,img):
+        temp = img.astype(np.float32)
+        temp2 = temp.T
+        temp2 -= self._mean_s2
+        temp2 /= self._std_s2
+
+        temp = temp2.T
+        return temp
     
-    if col != 1:
-        slice_indices = np.linspace(0, (row * col) -1, col * row, dtype=int)
-        #print(slice_indices)
-        for ax, idx in zip(axes.ravel(), slice_indices):
-            im = ax.imshow(array[:, :, idx], cmap=cmap)
-            if names == False:
-                ax.set_title(f"Slice {idx}")
-            else:
-                ax.set_title(names[idx], fontsize=10)     
-            # ax.set_xticks([0, 32, 64, 96, 127])
-            # ax.set_yticks([0, 32, 64, 96, 127])
-            # ax.set_xticklabels(['X0', 'X32', 'X64', 'X96', 'X127'])
-            # ax.set_yticklabels(['Y0', 'Y32', 'Y64', 'Y96', 'Y127'])
+def get_row_col_indices(chipsize, overlap, number_of_rows, number_of_cols):
+    '''
+    chipsize: the desired size of image chips passed on to GPU for prediction
+    overlap: the overlap in rows and cols of image chips @chipsize
+    number_of_rows, number_of_cols: overall number of rows and cols of entire datablock that should be predicted
+    '''
+    row_start = [i for i in range(0, number_of_rows, chipsize - overlap)]
+    row_end = [i for i in range (chipsize, number_of_rows, chipsize - overlap)]
+    row_start = row_start[:len(row_end)] 
 
-            cbar_ax = ax.inset_axes([0.1, -0.2, 0.8, 0.05])  # [x, y, width, height]
-            cbar = fig.colorbar(im, cax=cbar_ax, orientation='horizontal')
-            cbar.set_label('Value Scale')
-    else:
-            im = axes.imshow(array[:, :], cmap=cmap)
-            #ax.set_xticks([0, 32, 64, 96, 127])
-            #ax.set_yticks([0, 32, 64, 96, 127])
-            #ax.set_xticklabels(['X0', 'X32', 'X64', 'X96', 'X127'])
-            #ax.set_yticklabels(['Y0', 'Y32', 'Y64', 'Y96', 'Y127'])
+    col_start = [i for i in range(0, number_of_cols, chipsize - overlap)]
+    col_end = [i for i in range (chipsize, number_of_cols, chipsize - overlap)] 
+    col_start = col_start[:len(col_end)]
 
-            cbar_ax = axes.inset_axes([0.1, -0.2, 0.8, 0.05])  # [x, y, width, height]
-            cbar = fig.colorbar(im, cax=cbar_ax, orientation='horizontal')
-            cbar.set_label('Value Scale')
+    return [row_start, row_end, col_start, col_end]
+
+def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack):
+    '''
+    path_to_model: path to .pth file
+    list_of_row_col_indices: a list in the order row_start, row_end, col_start, col_end (output of get_row_col_indices). This will be used to read in small chips from npdstack
+    npdstack: normalized sentinel-2 npdstack (output from loadVRTintoNUmpyAI4)
+    '''
+
+    row_start = list_of_row_col_indices[0]
+    row_end   = list_of_row_col_indices[1]
+    col_start = list_of_row_col_indices[2]
+    col_end   = list_of_row_col_indices[3]
+
+    # define the model (.pth) and assess loss curves
+    #model_name = dataFolder + 'output/models/model_state_All_but_LU_transformed_42.pth'
+    model_name_short = path_to_model.split('/')[-1].split('.')[0]
  
-    fig.subplots_adjust(hspace=0.2, wspace=0.2)
-    if title != False:
-        fig.suptitle(f'Date is {title[0]} at canals {title[1]}', fontsize=12)
-    plt.tight_layout()
-    plt.show()
+    NClasses = 1
+    nf = 96
+    verbose = True
+    model_config = {'in_channels': 4,
+                    'spatial_size_init': (128, 128),
+                    'depths': [2, 2, 5, 2],
+                    'nfilters_init': nf,
+                    'nheads_start': nf // 4,
+                    'NClasses': NClasses,
+                    'verbose': verbose,
+                    'segm_act': 'sigmoid'}
+
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+    if torch.cuda.is_available():
+        modeli = ptavit3d_dn(**model_config).to(device)
+        modeli.load_state_dict(torch.load(path_to_model))
+        model = modeli.to(device) # Set model to gpu
+        model.eval()
+        
+    preds = []
+
+    for i in range(len(row_end)):
+        for j in range(len(col_end)):
+        
+            image = torch.tensor(npdstack[np.newaxis, :, :, row_start[i]:row_end[i], col_start[j]:col_end[j]])
+            image = image.to(torch.float)
+            image = image.to(device)  # Move image to the correct device
+        
+            with torch.no_grad():
+                pred = model(image)
+                preds.append(pred.detach().cpu().numpy())
+                
+    torch.cuda.empty_cache()
+    del model
+    del modeli
+    del device
+    del image
+
+    return preds
+
+def export_GPU_predictions(list_of_predictions, path_to_mask, vrt_path, list_of_row_col_indices, out_path):
+    '''
+    list_of_predictions: a list of predicted chips at same dimensions (output from predict_on_GPU
+    path_to_mask: a path to mask that has the same dimensions as the vrt on which predictions have been undertaken
+    vrt_path: path to a folder that contains the vrt files, the predictions (and mask) is based on. Will be used for GeoTransform and Projection
+    list_of_row_col_indices: a list in the order row_start, row_end, col_start, col_end (output of get_row_col_indices). 
+                                Will be used to read in mask chips and manipulate Geotransform
+    out_path: path to where the predicted images should be stored to
+    '''
+
+    row_start = list_of_row_col_indices[0]
+    row_end   = list_of_row_col_indices[1]
+    col_start = list_of_row_col_indices[2]
+    col_end   = list_of_row_col_indices[3]
+
+    if not out_path.endswith('/'):
+        out_path = out_path + '/'
+
+    gtiff_driver = gdal.GetDriverByName('GTiff')
+    vrt_ds = gdal.Open(getFilelist(vrt_path, '.vrt')[0])
+    geoTF = vrt_ds.GetGeoTransform()
+    filenames = [f'X_{col_start[j]}_Y_{row_start[i]}.tif' for i in range(len(row_start)) for j in range(len(col_start))]
+
+    # load mask
+    ds = gdal.Open(path_to_mask)
+    mask = ds.GetRasterBand(1).ReadAsArray()
+
+    for fold in ['chips/', 'masked_chips/']:
+        os.makedirs(f'{out_path}[fold]', exist_ok=True)
+
+    for i, file in enumerate(filenames):
+        for j in ['chips/', 'masked_chips/']:
+            out_ds = gtiff_driver.Create(f'{out_path}{j}{str(chipsize)}_{overlap}_{file}', int(chipsize - overlap), int(chipsize - overlap), 3, gdal.GDT_Float32)
+            # change the Geotransform for each chip
+            geotf = list(geoTF)
+            # get column and rows from filenames
+            geotf[0] = geotf[0] + geotf[1] * (int(file.split('X_')[-1].split('_')[0]) + overlap/2)
+            geotf[3] = geotf[3] + geotf[5] * (int(file.split('Y_')[-1].split('.')[0]) + overlap/2)
+            #print(f'X:{geoTF[0]}  Y:{geoTF[3]}  AT {file}')
+            out_ds.SetGeoTransform(tuple(geotf))
+            out_ds.SetProjection(vrt_ds.GetProjection())
+
+            arr = list_of_predictions[i][0].transpose(1, 2, 0)
+            if j == 'masked_chips/':
+                maskSub = mask[int(int(file.split('Y_')[-1].split('.')[0]) + overlap/2):chipsize + int(int(file.split('Y_')[-1].split('.')[0]) - overlap/2), 
+                            int(int(file.split('X_')[-1].split('_')[0]) + overlap/2):chipsize + int(int(file.split('X_')[-1].split('_')[0]) - overlap/2)]
+                for band in range(3):                
+                    out_ds.GetRasterBand(band + 1).WriteArray(arr[int(overlap/2): -int(overlap/2), int(overlap/2): -int(overlap/2), band] * maskSub)
+                del out_ds
+            else:
+                for band in range(3):
+                    out_ds.GetRasterBand(band + 1).WriteArray(arr[int(overlap/2): -int(overlap/2), int(overlap/2): -int(overlap/2), band])
+                del out_ds
+
+def predicted_chips_to_vrt(path_to_chips, chipsize, overlap, path_to_folder_out, pyramids=False):
+    '''
+    path_to_chips: path to chips exported via export_GPU_predictions
+    chipsize + overlap: the size of these chips (in order to select the chips if chips from different predictions are in the same folder)
+    path_to_folder_out: path to FOLDER where vrt will be stored
+    '''
+    if not path_to_folder_out.endswith('/'):
+        path_to_folder_out = path_to_folder_out + '/'
+    if not path_to_chips.endswith('/'):
+        path_to_chips = path_to_chips + '/'  
+    file_end = path_to_chips.split('/')[-2]
+    
+    os.makedirs(path_to_folder_out, exist_ok=True)
+
+    chip_id = f'{chipsize}_{overlap}'
+    chips = getFilelist(path_to_chips, '.tif')
+    chips = [chip for chip in chips if chip_id in chip]
+
+    for c in chips:print(c)
+    # create stacked vrts of chips
+    vrt = gdal.BuildVRT(f'{path_to_folder_out}{chipsize}_{overlap}_{file_end}.vrt', chips, separate = False)
+    vrt = None
+    convertVRTpathsTOrelative(f'{path_to_folder_out}{chipsize}_{overlap}_{file_end}.vrt')
+
+    if pyramids:
+        vrtPyramids(f'{path_to_folder_out}{chipsize}_{overlap}_{file_end}.vrt')
+
+def subset_mask_to_prediction_extent(path_reference_mask, path_to_prediction_vrt):
+    '''
+    path_reference_mask: path to the reference mask
+    path_to_prediction_vrt: path to a vrt of the predicted image chips
+    '''
+
+    # check if mask has different extent from prediction
+    # if so, make it the same extent for further processing (classification)
+    # --> mask can never be smaller than prediciton, therefore no need to check
+
+    ext_mask = getExtentRas(path_reference_mask)
+    ext_pred = getExtentRas(path_to_prediction_vrt)
+
+    if ext_mask == ext_pred:
+        print('Mask already has same extent as prediction - no further subsetting needed :)')
+    else:
+        common_bounds = commonBoundsDim([ext_mask, ext_pred])
+        common_coords = commonBoundsCoord(common_bounds)
+        if common_bounds == ext_pred:
+            ds = gdal.Open(path_reference_mask)
+            in_gt = ds.GetGeoTransform()
+            inv_gt = gdal.InvGeoTransform(in_gt)
+            # transform coordinates into offsets (in cells) and make them integer
+            off_UpperLeft = gdal.ApplyGeoTransform(inv_gt, common_coords[0]['UpperLeftXY'][0], common_coords[0]['UpperLeftXY'][1])  # new UL * rastersize^-1  + original ul/rastersize(opposite sign
+            off_LowerRight = gdal.ApplyGeoTransform(inv_gt, common_coords[0]['LowerRightXY'][0], common_coords[0]['LowerRightXY'][1])
+            off_ULx, off_ULy = map(round, off_UpperLeft) 
+            off_LRx, off_LRy = map(round, off_LowerRight)
+
+            band = ds.GetRasterBand(1)
+            data = band.ReadAsArray(off_ULx, off_ULy, off_LRx - off_ULx, off_LRy - off_ULy)
 
 
-def getNestedListMinLengthIndex(nestedList):
-    res = [index for index, band in enumerate(nestedList) if len(band) == min([len(i) for i in nestedList])]
-    return res[0]
+            out_ds = gdal.GetDriverByName('GTiff').Create(path_reference_mask.split('.')[0] + '_prediction_extent.tif', 
+                                                        off_LRx - off_ULx, 
+                                                        off_LRy - off_ULy, 1, ds.GetRasterBand(1).DataType)
+            out_gt = list(in_gt)
+            out_gt[0], out_gt[3] = gdal.ApplyGeoTransform(in_gt, off_ULx, off_ULy)
+            out_ds.SetGeoTransform(out_gt)
+            out_ds.SetProjection(ds.GetProjection())
 
-
-def getBandNames(rasterstack):
-    bands = []
-    ds = gdal.Open(rasterstack)
-    numberBands = ds.RasterCount
-    for i in range(numberBands):
-        bands.append(ds.GetRasterBand(i+1).GetDescription())
-    return bands
-
-
-def makeZeroNAN(arr):
-    arr[arr == 0] = np.nan
-    return arr
-
-
-def RasterKiller(raster_path):
-    if os.path.isfile(raster_path):
-        os.remove(raster_path)
+            out_ds.GetRasterBand(1).WriteArray(data)
+            if band.GetNoDataValue():
+                out_ds.GetRasterBand(1).SetNoDataValue(band.GetNoDataValue())
+            del out_ds
 
 #####################################################################################
 #####################################################################################
@@ -310,11 +446,179 @@ def vrtPyramids(vrtpath):
     del Image
 
 
+def reduce_force_to_validmonths(path_to_forceoutput, start_month_int, end_month_int):
+    '''path_to_forceoutput: path of stored force output (quite likely you want the folder in which all tile folders are)
+    start_month_int & end_month_int: e.g. 3 for march and 8 for August
+    '''
+    # get rid of force output that is not needed -> months outside of growing season that do not exist in AI4Boundaries
+    files = getFilelist(path_to_forceoutput, '.tif', deep=True)
+
+    filesToKill = [f for f in files if int(f.split('-')[-1].split('.')[0]) not in [i for i in range(start_month_int, end_month_int + 1, 1)]]
+    for file in filesToKill:
+        RasterKiller(file)
+
+    return list(filter(lambda item: item not in filesToKill, files))
+
+def get_forcetiles_range(list_of_forcefiles):
+    '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
+    creats a string that indicates X and Y extremes from list_of_forcefiles'''
+    tiles = list(set([file.split('output/')[-1].split('/')[1].split('/')[0] for file in list_of_forcefiles]))
+    return getFORCExyRange(tiles)
+
+def force_order_BGRBNR(list_of_forcefiles):
+    '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
+        will return a list that orders the input list to blue, green, red, ir independently from tiles and dates'''
+    tiles = list(set([file.split('output/')[-1].split('/')[1].split('/')[0] for file in list_of_forcefiles]))
+    tilefilesL = []
+    for tile in tiles:
+        tilefiles = [file for file in list_of_forcefiles if tile in file]
+        tilefilesL.append(getBluGrnRedBnrFORCEList(tilefiles))
+    
+    return tilefilesL
+
+
+def force_to_vrt(list_of_forcefiles, ordered_forcetiles, vrt_out_path, pyramids=False):
+    '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
+        ordered_forcetiles: e.g output from force_order_BGRBNR
+        vrt_out_path: path where .vrt files will be created (there will be more than one to account for all the bands)
+        pyramids: if set to True, pyramids will be created (might be very very large!!)'''
+    
+    # tiles = list(set([file.split('output/')[-1].split('/')[1].split('/')[0] for file in list_of_forcefiles]))
+    force_folder_name = force_order_BGRBNR(list_of_forcefiles)
+    if not vrt_out_path.endswith('/'):
+        vrt_out_path = vrt_out_path + '/'
+    outDir = f'{vrt_out_path}{force_folder_name}/'
+    if not os.path.exists(outDir):
+        os.makedirs(outDir)
+        print('outDir exists')
+        print(outDir)
+        for i in range(len(ordered_forcetiles[0])):
+            vrt = gdal.BuildVRT(f'{outDir}{force_folder_name}_{str(i)}.vrt', [tilefile[i] for tilefile in ordered_forcetiles], separate = False)
+            vrt = None
+        print('single vrts created')
+
+        # make paths in vrts relative
+        vrts = getFilelist(outDir, '.vrt')
+        for vrt in vrts:
+            convertVRTpathsTOrelative(vrt)
+        nums = [int(vrt.split('_')[-1].split('.')[0]) for vrt in vrts]
+        vrts_sorted = sortListwithOtherlist(nums, vrts)[-1]
+        print('paths in vrts made relative')
+        
+        vrt = gdal.BuildVRT(f'{outDir}{force_folder_name}_Cube.vrt', vrts_sorted, separate = True)
+        vrt = None
+        # convertVRTpathsTOrelative(f'{outDir}{force_folder_name}_Cube.vrt')
+        print('overlord vrt created')
+        if pyramids:
+            # build pyramids
+            vrtPyramids(f'{outDir}{force_folder_name}_Cube.vrt')
+            print('VRT created with pyramids')
+    else:
+        print('Vrt might already exist - please check!!')
+
+def loadVRTintoNumpyAI4(vrtPath):
+    '''vrtPath: path in which vrts are stored
+        vrts will be loaded into numpy array and normalized (for Sentinel-2 10m bands!!!!!)'''
+    vrtFiles = [file for file in getFilelist(vrtPath, '.vrt') if 'Cube' not in file]
+    vrtFiles = sortListwithOtherlist([int(vrt.split('_')[-1].split('.')[0]) for vrt in vrtFiles], vrtFiles)[-1]
+    bands = []
+
+    for vrt in vrtFiles:
+        ds = gdal.Open(vrt)
+        bands.append(ds.GetRasterBand(1).ReadAsArray())
+    cube = np.dstack(bands)
+    data_cube = np.transpose(cube, (2, 0, 1))
+    reshaped_cube = data_cube.reshape(4, 6, ds.RasterYSize, ds.RasterXSize)
+    normalizer = AI4BNormal_S2()
+    return normalizer(reshaped_cube)
+
 #####################################################################################
 #####################################################################################
 ################# General stuff #####################################################
 #####################################################################################
 ##################################################################################### 
+
+def getFilelist(originpath, ftyp, deep = False, order = True):
+    out   = []
+    if deep == False:
+        files = os.listdir(originpath)
+        for i in files:
+            if i.split('.')[-1] in ftyp:
+                if originpath.endswith('/'):
+                    out.append(originpath + i)
+                else:
+                    out.append(originpath + '/' + i)
+            # else:
+            #     print("non-matching file - {} - found".format(i.split('.')[-1]))
+    else:
+        for path, subdirs, files in os.walk(originpath):
+            for i in files:
+                if i.split('.')[-1] in ftyp:
+                    out.append(os.path.join(path, i))
+    if order == True:
+        out = sorted(out)
+    return out
+
+def plotter(array, row=1, col=1, names=False, title=False):
+
+    # Plot the slices
+    fig, axes = plt.subplots(row, col, figsize=(col*5, row*5), constrained_layout=False)  # 4 slices
+    # Create a colormap
+    cmap = plt.cm.viridis
+    
+    if col != 1:
+        slice_indices = np.linspace(0, (row * col) -1, col * row, dtype=int)
+        #print(slice_indices)
+        for ax, idx in zip(axes.ravel(), slice_indices):
+            im = ax.imshow(array[:, :, idx], cmap=cmap)
+            if names == False:
+                ax.set_title(f"Slice {idx}")
+            else:
+                ax.set_title(names[idx], fontsize=10)     
+            # ax.set_xticks([0, 32, 64, 96, 127])
+            # ax.set_yticks([0, 32, 64, 96, 127])
+            # ax.set_xticklabels(['X0', 'X32', 'X64', 'X96', 'X127'])
+            # ax.set_yticklabels(['Y0', 'Y32', 'Y64', 'Y96', 'Y127'])
+
+            cbar_ax = ax.inset_axes([0.1, -0.2, 0.8, 0.05])  # [x, y, width, height]
+            cbar = fig.colorbar(im, cax=cbar_ax, orientation='horizontal')
+            cbar.set_label('Value Scale')
+    else:
+            im = axes.imshow(array[:, :], cmap=cmap)
+            #ax.set_xticks([0, 32, 64, 96, 127])
+            #ax.set_yticks([0, 32, 64, 96, 127])
+            #ax.set_xticklabels(['X0', 'X32', 'X64', 'X96', 'X127'])
+            #ax.set_yticklabels(['Y0', 'Y32', 'Y64', 'Y96', 'Y127'])
+
+            cbar_ax = axes.inset_axes([0.1, -0.2, 0.8, 0.05])  # [x, y, width, height]
+            cbar = fig.colorbar(im, cax=cbar_ax, orientation='horizontal')
+            cbar.set_label('Value Scale')
+ 
+    fig.subplots_adjust(hspace=0.2, wspace=0.2)
+    if title != False:
+        fig.suptitle(f'Date is {title[0]} at canals {title[1]}', fontsize=12)
+    plt.tight_layout()
+    plt.show()
+
+def getNestedListMinLengthIndex(nestedList):
+    res = [index for index, band in enumerate(nestedList) if len(band) == min([len(i) for i in nestedList])]
+    return res[0]
+
+def getBandNames(rasterstack):
+    bands = []
+    ds = gdal.Open(rasterstack)
+    numberBands = ds.RasterCount
+    for i in range(numberBands):
+        bands.append(ds.GetRasterBand(i+1).GetDescription())
+    return bands
+
+def makeZeroNAN(arr):
+    arr[arr == 0] = np.nan
+    return arr
+
+def RasterKiller(raster_path):
+    if os.path.isfile(raster_path):
+        os.remove(raster_path)
 
 def getAttributesName(layer):
 
