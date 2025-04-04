@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from osgeo import gdal
 import matplotlib.pyplot as plt
+import higra as hg
 import math
 import os
 import time
@@ -10,7 +11,7 @@ import osgeo
 from osgeo import ogr, osr
 import random
 import xml.etree.ElementTree as ET
-
+from skimage import measure
 
 #####################################################################################
 #####################################################################################
@@ -263,7 +264,6 @@ def getAllDatesS3(listOfFiles, year='all'):
     else:
         return np.sort(tim)
 
-
 def getGeoTransFromNC(ncfile):
     '''Takes a path to an ncfile or an xarray_dataset and returns a tupel that can be used for gdal's SetGeotransform()'''
     
@@ -276,14 +276,12 @@ def getGeoTransFromNC(ncfile):
     pixelHeight = -pixelWidth
     return (upperLeft_X, pixelWidth, rotation, upperLeft_Y, rotation, pixelHeight)
 
-
 def getShapeFromNC(ncfile):
     '''Takes a path to an ncfile or an xarray_dataset and returns shape[1], shape[0], shape[2] ,comparable to np.array.shape()'''
     
     if type(ncfile) == str:
         ncfile = xr.open_dataset(ncfile)
     return len(ncfile.coords['x'].values), len(ncfile.coords['y'].values), ncfile[','.join(ncfile.data_vars.keys()).split(',')[-1]].shape[0]
-
 
 def getDataFromNC(ncfile):
     '''Takes a path to an ncfile or an xarray_dataset and returns a 3D numpy array of the data'''
@@ -293,14 +291,12 @@ def getDataFromNC(ncfile):
     arr = ncfile[[b for b in ','.join(ncfile.data_vars.keys()).split(',') if b == 'LST'][0]].to_numpy() # makes sure that LST exists
     return np.swapaxes(np.swapaxes(arr, 0, 1), 1, 2)
     
-
 def getCRS_WKTfromNC(ncfile):
     '''Takes a path to an ncfile or an xarray_dataset and returns coordinate sys as wkt'''
     
     if type(ncfile) == str:
         ncfile = xr.open_dataset(ncfile)
     return ncfile['crs'].attrs['crs_wkt']
-
 
 def convertNCtoTIF(ncfile, storPath, fileName, accDT, make_uint16 = False, explode=False):
     '''Converts a filepath to an nc file or a .nc file to a .tif with option to store it UINT16 (Kelvin values are multiplied by 100 before decimals are cut off)'''
@@ -344,7 +340,6 @@ def convertNCtoTIF(ncfile, storPath, fileName, accDT, make_uint16 = False, explo
             out_ds.GetRasterBand(1).SetDescription(str(accDT[band]).split('.')[0])
             del out_ds
 
-
 def getAccDateTimesByfilename(dicti, filename):
     """Finds the index of a filename in lookUp['filename'] and retrieves and return corresponding accDateTimes"""
     
@@ -354,7 +349,6 @@ def getAccDateTimesByfilename(dicti, filename):
         return accDateTimes
     else:
         return print(f'Filename {filename} not found!')
-
 
 def exportNCarrayDerivatesInt(ncfile, storPath, fileName, bandname, arr, make_uint16 = False):
 
@@ -387,7 +381,6 @@ def sortListwithOtherlist(list1, list2):
     sortlist1, sortlist2 = zip(*sorted(zip(list1, list2)))
     return list(sortlist1), list(sortlist2)
 
-
 def getBluGrnRedBnrFORCEList(filelist):
     '''Takes a list of paths to an exploded FORCE output and returns a list with ordered paths
     First all bluem then green, red and bnir bands. Furthermore, paths are chronologically sorted (1,2,3,4..months)'''
@@ -403,7 +396,6 @@ def getBluGrnRedBnrFORCEList(filelist):
 
     return sum([blu, grn, red, bnr], [])
 
-
 def getFORCExyRange(tiles):
     '''take a list of subsetted FORCE Tile names in the Form of X0069_Y0042 and returns a string to be used as filename 
     that gives X and Y range ,e.g. Force_X_from_68_to_69_Y_from_42_to_42'''
@@ -411,7 +403,6 @@ def getFORCExyRange(tiles):
     Y = [int(tile.split('_')[1][-2:]) for tile in tiles]
 
     return f'Force_X_from_{min(X)}_to_{max(X)}_Y_from_{min(Y)}_to_{max(Y)}'
-
 
 def convertVRTpathsTOrelative(vrt_path):
     tree = ET.parse(vrt_path)
@@ -426,14 +417,12 @@ def convertVRTpathsTOrelative(vrt_path):
     # Save the modified VRT file
     tree.write(vrt_path)
 
-
 def sortListwithOtherlist(list1, list2):
     ''' list1: unsorted list
         list2: unsorted list with same length as list1
         Sorts list2 based on sorted(list1). Returns sorted list1 list2'''
     sortlist1, sortlist2 = zip(*sorted(zip(list1, list2)))
     return list(sortlist1), list(sortlist2)
-
 
 def vrtPyramids(vrtpath):
     '''takes a vrtpath (or gdalOpened vrt) and produces pyramids'''
@@ -444,7 +433,6 @@ def vrtPyramids(vrtpath):
     gdal.SetConfigOption('COMPRESS_OVERVIEW', 'DEFLATE')
     Image.BuildOverviews("NEAREST", [2,4,8,16,32,64])
     del Image
-
 
 def reduce_force_to_validmonths(path_to_forceoutput, start_month_int, end_month_int):
     '''path_to_forceoutput: path of stored force output (quite likely you want the folder in which all tile folders are)
@@ -475,7 +463,6 @@ def force_order_BGRBNR(list_of_forcefiles):
         tilefilesL.append(getBluGrnRedBnrFORCEList(tilefiles))
     
     return tilefilesL
-
 
 def force_to_vrt(list_of_forcefiles, ordered_forcetiles, vrt_out_path, pyramids=False):
     '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
@@ -531,6 +518,221 @@ def loadVRTintoNumpyAI4(vrtPath):
     reshaped_cube = data_cube.reshape(4, 6, ds.RasterYSize, ds.RasterXSize)
     normalizer = AI4BNormal_S2()
     return normalizer(reshaped_cube)
+
+#####################################################################################
+#####################################################################################
+################# 05_Prepare_Validation_and_Validation ##############################
+#####################################################################################
+##################################################################################### 
+
+########### sub-functions
+
+def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None):
+    '''
+    exports an np.array to a tif, based on a tif that has the same extent. Probably, the np.array is a manipulation of that tif
+    array: the numpy array
+    tif_path: path to the tif from which geoinformation will be extracted
+    path_to_file_out: where the new tif should be stored
+    noData = a no data value can be assigned to the exported tif
+    '''
+    ds = gdal.Open(tif_path)
+    gtiff_driver = gdal.GetDriverByName('GTiff')
+    out_ds = gtiff_driver.Create(path_to_file_out, ds.RasterXSize, ds.RasterYSize, 1, gdal.GDT_Float32)
+    out_ds.SetGeoTransform(ds.GetGeoTransform())
+    out_ds.SetProjection(ds.GetProjection())             
+    out_ds.GetRasterBand(1).WriteArray(array)
+    if noData != None:
+        out_ds.GetRasterBand(1).SetNoDataValue(noData)
+    del out_ds
+
+def makePyramidsForTif(tif_path):
+    ds = gdal.Open(tif_path)
+    ds.BuildOverviews("AVERAGE", [2, 4, 8, 16, 32])
+    ds = None
+    print('pyramids created')
+
+def TooCloseToBorder(numbered_array, border_limit):
+    rows, cols = np.where(numbered_array==True)
+    r,c = numbered_array.shape
+    if any(value < border_limit for value in [np.min(rows), r - np.max(rows), np.min(cols), c - np.max(cols)]):
+        return True
+    
+def InstSegm(extent, boundary, t_ext=0.4, t_bound=0.2):
+    """
+    INPUTS:
+    extent : extent prediction
+    boundary : boundary prediction
+    t_ext : threshold for extent
+    t_bound : threshold for boundary
+    OUTPUT:
+    instances
+    """
+
+    # Threshold extent mask
+    ext_binary = np.uint8(extent >= t_ext)
+
+    # Artificially create strong boundaries for
+    # pixels with non-field labels
+    input_hws = np.copy(boundary)
+    input_hws[ext_binary == 0] = 1
+
+    # Create the directed graph
+    size = input_hws.shape[:2]
+    graph = hg.get_8_adjacency_graph(size)
+    edge_weights = hg.weight_graph(
+        graph,
+        input_hws,
+        hg.WeightFunction.mean
+    )
+
+    tree, altitudes = hg.watershed_hierarchy_by_dynamics(
+        graph,
+        edge_weights
+    )
+    
+    # Get individual fields
+    # by cutting the graph using altitude
+    instances = hg.labelisation_horizontal_cut_from_threshold(
+        tree,
+        altitudes,
+        threshold=t_bound)
+    
+    instances[ext_binary == 0] = -1
+
+    return instances
+
+def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext, 
+             t_bound, plot=False, border_limit=10):
+
+    row_start = int(row_col_start.split('_')[0])
+    col_start = int(row_col_start.split('_')[1])
+    # get predicted instance segmentation
+    instances_pred = InstSegm(extent_pred, boundary_pred, t_ext=t_ext, t_bound=t_bound)
+    instances_pred = measure.label(instances_pred, background=-1) 
+    
+    # get instances from ground truth label
+    # binary_true = extent_true > 0
+    # instances_true = measure.label(binary_true, background=0, connectivity=1)
+    instances_true = extent_true
+    
+    # loop through true fields
+    field_values = np.unique(instances_true)
+    
+    best_IoUs = []
+    field_IDs = []
+    field_sizes = []
+    centroid_rows = []
+    centroid_cols = []
+    centroid_IoUS = []
+    intersect_rows = []
+    intersect_cols = []
+    temp_rows = []
+    temp_cols = []
+
+    for field_value in field_values:
+        if field_value == 0:
+            continue # move on to next value
+    
+        this_field = instances_true == field_value
+        # check if field is close to border and throw away if too close
+        if TooCloseToBorder(this_field, border_limit):
+            continue
+
+        # calculate centroid
+        this_field_centroid = np.mean(np.column_stack(np.where(this_field)),axis=0).astype(int)
+        
+        # fill lists with info
+        centroid_rows.append(this_field_centroid[0])
+        centroid_cols.append(this_field_centroid[1])
+        field_IDs.append(field_value)
+        field_sizes.append(np.sum(this_field))
+        
+        # find predicted fields that intersect with true field
+        intersecting_fields = this_field * instances_pred
+        intersect_values = np.unique(intersecting_fields)
+  
+        # compute IoU for each intersecting field
+        field_IoUs = []
+        center_IoU = 0
+        for intersect_value in intersect_values:
+            if intersect_value == 0:
+                continue # move on to next value
+            
+            pred_field = instances_pred == intersect_value
+            r, c = np.where(pred_field == True)
+            temp_rows.append(r + row_start)
+            temp_cols.append(c + col_start)
+            union = this_field + pred_field > 0
+            intersection = (this_field * pred_field) > 0
+            IoU = np.sum(intersection) / np.sum(union)
+            field_IoUs.append(IoU)
+            # check for centroid condition
+            if instances_pred[this_field_centroid[0], this_field_centroid[1]] == intersect_value:
+                center_IoU = IoU
+    
+        # take maximum IoU - this is the IoU for this true field
+        if len(field_IoUs) != 0:
+            best_IoUs.append(np.max(field_IoUs))
+            # fill centroid list
+            centroid_IoUS.append(center_IoU)
+            max_index = np.argmax(field_IoUs)
+            intersect_rows.append(temp_rows[max_index])
+            intersect_cols.append(temp_cols[max_index])
+            temp_rows = []
+            temp_cols = []
+        else:
+            best_IoUs.append(0)
+            # fill centroid list
+            centroid_IoUS.append(0)
+            intersect_rows.append(0)
+            intersect_cols.append(0)
+            temp_rows = []
+            temp_cols = []
+
+        # export instances_pred with centroids and fields where max(IoU) == True
+        
+    return best_IoUs, intersect_rows, intersect_cols, centroid_IoUS, centroid_rows, centroid_cols, field_IDs, field_sizes
+
+########## main-function
+
+def get_IoUs_per_Tile(tile, row_col_start, extent_true, extent_pred, boundary_pred, result_dir, border_limit=10):
+    print(f'Starting on tile {tile}')
+    # make a dictionary for export
+    k = ['tile','t_ext','t_bound', 'max_IoU', 'intersect_row', 'intersect_col', 'centroid_IoU', 'centroid_row', 'centroid_col', 'reference_field_IDs', 'reference_field_sizes'] #'medianIoU', 'meanIoU', 'IoU_50', 'IoU_80']
+    v = [list() for i in range(len(k))]
+    res = dict(zip(k, v))
+
+    # set the parameter combinations and test combinations
+    t_exts = [i/100 for i in range(10,55,5)] 
+    t_bounds = [i/100 for i in range(10,55,5)]
+
+    # loop over parameter combinations
+    for t_ext in t_exts:
+        for t_bound in t_bounds:
+            #print('thresholds: ' + str(t_ext) + ', ' +str(t_bound))
+
+            img_IoUs, intersect_rows, intersect_cols, centroid_IoUS, centroid_rows, centroid_cols, field_IDs, field_sizes = get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext=t_ext, t_bound=t_bound,
+                                border_limit=border_limit)
+            
+            for e, IoUs in enumerate(img_IoUs):
+    
+                res['tile'].append(tile)
+                res['t_ext'].append(t_ext)
+                res['t_bound'].append(t_bound)
+                res['max_IoU'].append(IoUs)
+                res['intersect_row'].append(intersect_rows[e])
+                res['intersect_col'].append(intersect_cols[e])
+                res['centroid_IoU'].append(centroid_IoUS[e])
+                res['centroid_row'].append(centroid_rows[e])
+                res['centroid_col'].append(centroid_cols[e])
+                res['reference_field_IDs'].append(field_IDs[e])
+                res['reference_field_sizes'].append(field_sizes[e])
+    
+    # export results
+    df  = pd.DataFrame(data = res)
+    df.to_csv(f'{result_dir}/{tile}_IoU_hyperparameter_tuning.csv', index=False)
+
+    print(f'Finished tile {tile}')
 
 #####################################################################################
 #####################################################################################
