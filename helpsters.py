@@ -526,6 +526,34 @@ def loadVRTintoNumpyAI4(vrtPath):
 ##################################################################################### 
 
 ########### sub-functions
+def export_intermediate_products(row_col_start, intermediate_aray, dummy_gt, dummy_proj, folder_out, filename, noData=None):
+    '''
+    intermediate_aray: array to be exported
+    dummy_gt + dummy_proj: GetGeotransform() and GetProjection from a gdal.Open object that contains desired geoinformation
+    folder_out: path to FOLDER, where intermediate product will be stored
+    noData = a no data value can be assigned to the exported tif
+    '''
+    if not folder_out.endswith('/'):
+        folder_out = folder_out + '/'
+
+    row_start = int(row_col_start.split('_')[0])
+    col_start = int(row_col_start.split('_')[1])
+   
+    out_ds = gdal.GetDriverByName('GTiff').Create(f'{folder_out}{filename}', 
+                                                intermediate_aray.shape[1], intermediate_aray.shape[0], 1, gdal.GDT_Int32)
+    # change the Geotransform for each chip
+    geotf = list(dummy_gt)
+    # get column and rows from filenames
+    geotf[0] = geotf[0] + geotf[1] * col_start
+    geotf[3] = geotf[3] + geotf[5] * row_start
+    #print(f'X:{geoTF[0]}  Y:{geoTF[3]}  AT {file}')
+    out_ds.SetGeoTransform(tuple(geotf))
+    out_ds.SetProjection(dummy_proj)
+                
+    out_ds.GetRasterBand(1).WriteArray(intermediate_aray)
+    if noData != None:
+        out_ds.GetRasterBand(1).SetNoDataValue(noData)
+    del out_ds
 
 def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None):
     '''
@@ -537,7 +565,7 @@ def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None)
     '''
     ds = gdal.Open(tif_path)
     gtiff_driver = gdal.GetDriverByName('GTiff')
-    out_ds = gtiff_driver.Create(path_to_file_out, ds.RasterXSize, ds.RasterYSize, 1, gdal.GDT_Float32)
+    out_ds = gtiff_driver.Create(path_to_file_out, ds.RasterXSize, ds.RasterYSize, 1, gdal.GDT_UInt32)
     out_ds.SetGeoTransform(ds.GetGeoTransform())
     out_ds.SetProjection(ds.GetProjection())             
     out_ds.GetRasterBand(1).WriteArray(array)
@@ -602,19 +630,23 @@ def InstSegm(extent, boundary, t_ext=0.4, t_bound=0.2):
     return instances
 
 def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext, 
-             t_bound, plot=False, border_limit=10):
+             t_bound, dummy_gt, dummy_proj, intermediate_path, border_limit=10):
 
     row_start = int(row_col_start.split('_')[0])
     col_start = int(row_col_start.split('_')[1])
     # get predicted instance segmentation
     instances_pred = InstSegm(extent_pred, boundary_pred, t_ext=t_ext, t_bound=t_bound)
     instances_pred = measure.label(instances_pred, background=-1) 
-    
+    export_intermediate_products(row_col_start, instances_pred, dummy_gt, dummy_proj,\
+                                  intermediate_path, filename=f'{t_ext}_{t_bound}_instance_pred_{row_col_start}.tif')
+
     # get instances from ground truth label
     # binary_true = extent_true > 0
     # instances_true = measure.label(binary_true, background=0, connectivity=1)
     instances_true = extent_true
-    
+    export_intermediate_products(row_col_start, instances_true, dummy_gt, dummy_proj,\
+                                  intermediate_path, filename=f'{t_ext}_{t_bound}_instance_true_{row_col_start}.tif')
+
     # loop through true fields
     field_values = np.unique(instances_true)
     
@@ -624,19 +656,19 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
     centroid_rows = []
     centroid_cols = []
     centroid_IoUS = []
-    intersect_rows = []
-    intersect_cols = []
+    centroid_IDs = []
     temp_rows = []
     temp_cols = []
+    intersectL  = []
 
     for field_value in field_values:
         if field_value == 0:
             continue # move on to next value
     
         this_field = instances_true == field_value
-        # check if field is close to border and throw away if too close
-        if TooCloseToBorder(this_field, border_limit):
-            continue
+        # # check if field is close to border and throw away if too close
+        # if TooCloseToBorder(this_field, border_limit):
+        #     continue
 
         # calculate centroid
         this_field_centroid = np.mean(np.column_stack(np.where(this_field)),axis=0).astype(int)
@@ -656,6 +688,7 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
         center_IoU = 0
         for intersect_value in intersect_values:
             if intersect_value == 0:
+                field_IoUs.append(0)
                 continue # move on to next value
             
             pred_field = instances_pred == intersect_value
@@ -669,6 +702,7 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
             # check for centroid condition
             if instances_pred[this_field_centroid[0], this_field_centroid[1]] == intersect_value:
                 center_IoU = IoU
+                centroid_IDs.append(field_value)
     
         # take maximum IoU - this is the IoU for this true field
         if len(field_IoUs) != 0:
@@ -676,29 +710,43 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
             # fill centroid list
             centroid_IoUS.append(center_IoU)
             max_index = np.argmax(field_IoUs)
-            intersect_rows.append(temp_rows[max_index])
-            intersect_cols.append(temp_cols[max_index])
+            intersectL.append(intersect_values[max_index])
             temp_rows = []
             temp_cols = []
         else:
             best_IoUs.append(0)
             # fill centroid list
             centroid_IoUS.append(0)
-            intersect_rows.append(0)
-            intersect_cols.append(0)
             temp_rows = []
             temp_cols = []
 
-        # export instances_pred with centroids and fields where max(IoU) == True
-        
-    return best_IoUs, intersect_rows, intersect_cols, centroid_IoUS, centroid_rows, centroid_cols, field_IDs, field_sizes
+    # Create mask of intersecting fields with best IoUs
+    intersect_mask = np.isin(instances_pred, intersectL)
+    filtered_instances_pred = instances_pred * intersect_mask
+    # centroids
+    for r,c, cid in zip(centroid_rows, centroid_cols, centroid_IDs):
+        filtered_instances_pred[r, c] = cid
+    export_intermediate_products(row_col_start, filtered_instances_pred, dummy_gt, dummy_proj, \
+                                 intermediate_path, filename=f'{t_ext}_{t_bound}_intersected_at_max_and_centroids_{row_col_start}.tif')
+
+    
+    # centers = np.zeros_like(filtered_instances_pred)
+    # for r,c, cid in zip(centroid_rows, centroid_cols, centroid_IDs):
+    #     centers[r, c] = cid
+    # export_intermediate_products(row_col_start, centers, dummy_gt, dummy_proj, intermediate_path, \
+    #                              filename=f'{t_ext}_{t_bound}_centroids_{row_col_start}.tif')
+    
+    
+    return best_IoUs, centroid_IoUS, centroid_rows, centroid_cols, field_IDs, field_sizes
 
 ########## main-function
 
-def get_IoUs_per_Tile(tile, row_col_start, extent_true, extent_pred, boundary_pred, result_dir, border_limit=10):
+def get_IoUs_per_Tile(tile, row_col_start, extent_true, extent_pred, boundary_pred, result_dir, \
+                      dummy_gt, dummy_proj, intermediate_path, border_limit=10):
     print(f'Starting on tile {tile}')
     # make a dictionary for export
-    k = ['tile','t_ext','t_bound', 'max_IoU', 'intersect_row', 'intersect_col', 'centroid_IoU', 'centroid_row', 'centroid_col', 'reference_field_IDs', 'reference_field_sizes'] #'medianIoU', 'meanIoU', 'IoU_50', 'IoU_80']
+    k = ['tile','t_ext','t_bound', 'max_IoU', 'centroid_IoU', 'centroid_row', 'centroid_col',\
+          'reference_field_IDs', 'reference_field_sizes'] #'medianIoU', 'meanIoU', 'IoU_50', 'IoU_80']
     v = [list() for i in range(len(k))]
     res = dict(zip(k, v))
 
@@ -711,8 +759,9 @@ def get_IoUs_per_Tile(tile, row_col_start, extent_true, extent_pred, boundary_pr
         for t_bound in t_bounds:
             #print('thresholds: ' + str(t_ext) + ', ' +str(t_bound))
 
-            img_IoUs, intersect_rows, intersect_cols, centroid_IoUS, centroid_rows, centroid_cols, field_IDs, field_sizes = get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext=t_ext, t_bound=t_bound,
-                                border_limit=border_limit)
+            img_IoUs, centroid_IoUS, centroid_rows, centroid_cols, field_IDs, field_sizes = \
+                get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext, t_bound, dummy_gt, \
+                         dummy_proj, intermediate_path, border_limit=border_limit)
             
             for e, IoUs in enumerate(img_IoUs):
     
@@ -720,8 +769,6 @@ def get_IoUs_per_Tile(tile, row_col_start, extent_true, extent_pred, boundary_pr
                 res['t_ext'].append(t_ext)
                 res['t_bound'].append(t_bound)
                 res['max_IoU'].append(IoUs)
-                res['intersect_row'].append(intersect_rows[e])
-                res['intersect_col'].append(intersect_cols[e])
                 res['centroid_IoU'].append(centroid_IoUS[e])
                 res['centroid_row'].append(centroid_rows[e])
                 res['centroid_col'].append(centroid_cols[e])
