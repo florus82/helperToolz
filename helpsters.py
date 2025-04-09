@@ -13,6 +13,7 @@ import random
 import xml.etree.ElementTree as ET
 from skimage import measure
 
+
 #####################################################################################
 #####################################################################################
 ################## For deep leaner, mainly from feevos' repo ########################
@@ -638,14 +639,14 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
     instances_pred = InstSegm(extent_pred, boundary_pred, t_ext=t_ext, t_bound=t_bound)
     instances_pred = measure.label(instances_pred, background=-1) 
     export_intermediate_products(row_col_start, instances_pred, dummy_gt, dummy_proj,\
-                                  intermediate_path, filename=f'{t_ext}_{t_bound}_instance_pred_{row_col_start}.tif')
+                                  intermediate_path, filename=f'{t_ext}_{t_bound}_instance_pred_{row_col_start}.tif', noData=0)
 
     # get instances from ground truth label
     # binary_true = extent_true > 0
     # instances_true = measure.label(binary_true, background=0, connectivity=1)
     instances_true = extent_true
     export_intermediate_products(row_col_start, instances_true, dummy_gt, dummy_proj,\
-                                  intermediate_path, filename=f'{t_ext}_{t_bound}_instance_true_{row_col_start}.tif')
+                                  intermediate_path, filename=f'{t_ext}_{t_bound}_instance_true_{row_col_start}.tif', noData=0)
 
     # loop through true fields
     field_values = np.unique(instances_true)
@@ -657,8 +658,6 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
     centroid_cols = []
     centroid_IoUS = []
     centroid_IDs = []
-    temp_rows = []
-    temp_cols = []
     intersectL  = []
 
     for field_value in field_values:
@@ -692,9 +691,6 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
                 continue # move on to next value
             
             pred_field = instances_pred == intersect_value
-            r, c = np.where(pred_field == True)
-            temp_rows.append(r + row_start)
-            temp_cols.append(c + col_start)
             union = this_field + pred_field > 0
             intersection = (this_field * pred_field) > 0
             IoU = np.sum(intersection) / np.sum(union)
@@ -711,14 +707,12 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
             centroid_IoUS.append(center_IoU)
             max_index = np.argmax(field_IoUs)
             intersectL.append(intersect_values[max_index])
-            temp_rows = []
-            temp_cols = []
+    
         else:
             best_IoUs.append(0)
             # fill centroid list
             centroid_IoUS.append(0)
-            temp_rows = []
-            temp_cols = []
+    
 
     # Create mask of intersecting fields with best IoUs
     intersect_mask = np.isin(instances_pred, intersectL)
@@ -727,7 +721,7 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
     for r,c, cid in zip(centroid_rows, centroid_cols, centroid_IDs):
         filtered_instances_pred[r, c] = cid
     export_intermediate_products(row_col_start, filtered_instances_pred, dummy_gt, dummy_proj, \
-                                 intermediate_path, filename=f'{t_ext}_{t_bound}_intersected_at_max_and_centroids_{row_col_start}.tif')
+                                 intermediate_path, filename=f'{t_ext}_{t_bound}_intersected_at_max_and_centroids_{row_col_start}.tif', noData=0)
 
     
     # centers = np.zeros_like(filtered_instances_pred)

@@ -3,16 +3,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import rasterio, glob, xarray as xr
 import os,sys
-# import albumentations as A
-# from albumentations.core.transforms_interface import  ImageOnlyTransform
-# import torch
-# from torch.utils.data import Dataset
-# from torch.utils.data import DataLoader   
-# import matplotlib.pyplot as plt
-# sys.path.append('../')                                                      
-# from tfcl.models.ptavit3d.ptavit3d_dn import ptavit3d_dn       
-# from tfcl.nn.loss.ftnmt_loss import ftnmt_loss               
-# from tfcl.utils.classification_metric import Classification  
+import albumentations as A
+from albumentations.core.transforms_interface import  ImageOnlyTransform
+import torch
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader   
+import matplotlib.pyplot as plt
+sys.path.append('../')                                                      
+from tfcl.models.ptavit3d.ptavit3d_dn import ptavit3d_dn       
+from tfcl.nn.loss.ftnmt_loss import ftnmt_loss               
+from tfcl.utils.classification_metric import Classification  
 from datetime import datetime
 import time
 import higra as hg
@@ -72,23 +72,23 @@ def export_single_np_to_tif(arr, src, path, name):
         dst.write(arr, 1)     
 # Normalization and transform functions
 
-# class AI4BNormal_S2(object):
-#     """
-#     class for Normalization of images, per channel, in format CHW 
-#     """
-#     def __init__(self):
+class AI4BNormal_S2(object):
+    """
+    class for Normalization of images, per channel, in format CHW 
+    """
+    def __init__(self):
 
-#         self._mean_s2 = np.array([5.4418573e+02, 7.6761194e+02, 7.1712860e+02, 2.8561428e+03 ]).astype(np.float32) 
-#         self._std_s2  = np.array( [3.7141626e+02, 3.8981952e+02, 4.7989127e+02 ,9.5173022e+02]).astype(np.float32) 
+        self._mean_s2 = np.array([5.4418573e+02, 7.6761194e+02, 7.1712860e+02, 2.8561428e+03 ]).astype(np.float32) 
+        self._std_s2  = np.array( [3.7141626e+02, 3.8981952e+02, 4.7989127e+02 ,9.5173022e+02]).astype(np.float32) 
 
-#     def __call__(self,img):
-#         temp = img.astype(np.float32)
-#         temp2 = temp.T
-#         temp2 -= self._mean_s2
-#         temp2 /= self._std_s2
+    def __call__(self,img):
+        temp = img.astype(np.float32)
+        temp2 = temp.T
+        temp2 -= self._mean_s2
+        temp2 /= self._std_s2
 
-#         temp = temp2.T
-#         return temp
+        temp = temp2.T
+        return temp
     
 # class TrainingTransformS2(object):
 #     # Built on Albumentations, this provides geometric transformation only  
@@ -279,76 +279,76 @@ def export_single_np_to_tif(arr, src, path, name):
 #     plt.show()
 
 
-# class TrainingTransform_for_rocks_Train(object):
-#     # Built on Albumentations, this provides geometric transformation only  
-#     def __init__(self,  prob = 1, norm = AI4BNormal_S2()):
-#         self.geom_trans = A.Compose([
-#                     #A.RandomCrop(width=128, height=128, p=1.0),  # Always apply random crop
-#                     A.OneOf([
-#                         A.HorizontalFlip(p=1),
-#                         A.VerticalFlip(p=1),
-#                         A.ElasticTransform(p=1), # VERY GOOD - gives perspective projection, really nice and useful - VERY SLOW   
-#                         A.GridDistortion(distort_limit=0.4,p=1.),
-#                         A.ShiftScaleRotate(shift_limit=0.25, scale_limit=(0.75,1.25), rotate_limit=180, p=1.0), # Most important Augmentation   
-#                         ],p=1.)
-#                     ],
-#             additional_targets={'imageS1': 'image','mask':'mask'},
-#             p = prob)
+class TrainingTransform_for_rocks_Train(object):
+    # Built on Albumentations, this provides geometric transformation only  
+    def __init__(self,  prob = 1, norm = AI4BNormal_S2()):
+        self.geom_trans = A.Compose([
+                    #A.RandomCrop(width=128, height=128, p=1.0),  # Always apply random crop
+                    A.OneOf([
+                        A.HorizontalFlip(p=1),
+                        A.VerticalFlip(p=1),
+                        A.ElasticTransform(p=1), # VERY GOOD - gives perspective projection, really nice and useful - VERY SLOW   
+                        A.GridDistortion(distort_limit=0.4,p=1.),
+                        A.ShiftScaleRotate(shift_limit=0.25, scale_limit=(0.75,1.25), rotate_limit=180, p=1.0), # Most important Augmentation   
+                        ],p=1.)
+                    ],
+            additional_targets={'imageS1': 'image','mask':'mask'},
+            p = prob)
       
-#         self.mytransform = self.transform_train
-#         self.norm = norm
+        self.mytransform = self.transform_train
+        self.norm = norm
         
-#     # def transform_valid(self, data):
-#     #     timgS2, tmask = data
-#     #     if self.norm is not None:
-#     #         timgS2 = self.norm(timgS2)
+    # def transform_valid(self, data):
+    #     timgS2, tmask = data
+    #     if self.norm is not None:
+    #         timgS2 = self.norm(timgS2)
         
-#     #     tmask= tmask 
-#     #     return timgS2,  tmask.astype(np.float32)
+    #     tmask= tmask 
+    #     return timgS2,  tmask.astype(np.float32)
 
-#     def transform_train(self, data):
-#         timgS2, tmask = data
-#         if self.norm is not None:
-#             timgS2 = self.norm(timgS2)
+    def transform_train(self, data):
+        timgS2, tmask = data
+        if self.norm is not None:
+            timgS2 = self.norm(timgS2)
 
-#         tmask= tmask 
-#         tmask = tmask.astype(np.float32)
-#         # Special treatment of time series
-#         c2,t,h,w = timgS2.shape
-#         #print (c2,t,h,w)              
-#         timgS2 = timgS2.reshape(c2*t,h,w)
-#         result = self.geom_trans(image=timgS2.transpose([1,2,0]),
-#                                  mask=tmask.transpose([1,2,0]))
-#         timgS2_t = result['image']
-#         tmask_t  = result['mask']
-#         timgS2_t = timgS2_t.transpose([2,0,1])
-#         tmask_t = tmask_t.transpose([2,0,1])
+        tmask= tmask 
+        tmask = tmask.astype(np.float32)
+        # Special treatment of time series
+        c2,t,h,w = timgS2.shape
+        #print (c2,t,h,w)              
+        timgS2 = timgS2.reshape(c2*t,h,w)
+        result = self.geom_trans(image=timgS2.transpose([1,2,0]),
+                                 mask=tmask.transpose([1,2,0]))
+        timgS2_t = result['image']
+        tmask_t  = result['mask']
+        timgS2_t = timgS2_t.transpose([2,0,1])
+        tmask_t = tmask_t.transpose([2,0,1])
         
-#         c2t,h2,w2 = timgS2_t.shape
+        c2t,h2,w2 = timgS2_t.shape
 
         
-#         timgS2_t = timgS2_t.reshape(c2,t,h2,w2)
-#         return timgS2_t,  tmask_t
-#     def __call__(self, *data):
-#         return self.mytransform(data)
+        timgS2_t = timgS2_t.reshape(c2,t,h2,w2)
+        return timgS2_t,  tmask_t
+    def __call__(self, *data):
+        return self.mytransform(data)
 
-# class TrainingTransform_for_rocks_Valid(object):
-#     # Built on Albumentations, this provides geometric transformation only  
-#     def __init__(self, norm = AI4BNormal_S2()):
+class TrainingTransform_for_rocks_Valid(object):
+    # Built on Albumentations, this provides geometric transformation only  
+    def __init__(self, norm = AI4BNormal_S2()):
         
-#         self.mytransform = self.transform_valid
-#         self.norm = norm
+        self.mytransform = self.transform_valid
+        self.norm = norm
         
-#     def transform_valid(self, data):
-#         timgS2, tmask = data
-#         if self.norm is not None:
-#             timgS2 = self.norm(timgS2)
+    def transform_valid(self, data):
+        timgS2, tmask = data
+        if self.norm is not None:
+            timgS2 = self.norm(timgS2)
         
-#         tmask= tmask 
-#         return timgS2,  tmask.astype(np.float32)
+        tmask= tmask 
+        return timgS2,  tmask.astype(np.float32)
     
-#     def __call__(self, *data):
-#         return self.mytransform(data)
+    def __call__(self, *data):
+        return self.mytransform(data)
     
 
 def checkemptyNC(pathList):
