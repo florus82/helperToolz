@@ -451,13 +451,13 @@ def reduce_force_to_validmonths(path_to_forceoutput, start_month_int, end_month_
 def get_forcetiles_range(list_of_forcefiles):
     '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
     creats a string that indicates X and Y extremes from list_of_forcefiles'''
-    tiles = list(set([file.split('output/')[-1].split('/')[1].split('/')[0] for file in list_of_forcefiles]))
+    tiles = list(set([file.split('output/')[-1].split('/')[2].split('/')[0] for file in list_of_forcefiles]))
     return getFORCExyRange(tiles)
 
 def force_order_BGRBNR(list_of_forcefiles):
     '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
         will return a list that orders the input list to blue, green, red, ir independently from tiles and dates'''
-    tiles = list(set([file.split('output/')[-1].split('/')[1].split('/')[0] for file in list_of_forcefiles]))
+    tiles = list(set([file.split('output/')[-1].split('/')[2].split('/')[0] for file in list_of_forcefiles]))
     tilefilesL = []
     for tile in tiles:
         tilefiles = [file for file in list_of_forcefiles if tile in file]
@@ -472,13 +472,12 @@ def force_to_vrt(list_of_forcefiles, ordered_forcetiles, vrt_out_path, pyramids=
         pyramids: if set to True, pyramids will be created (might be very very large!!)'''
     
     # tiles = list(set([file.split('output/')[-1].split('/')[1].split('/')[0] for file in list_of_forcefiles]))
-    force_folder_name = force_order_BGRBNR(list_of_forcefiles)
+    force_folder_name = get_forcetiles_range(list_of_forcefiles)
     if not vrt_out_path.endswith('/'):
         vrt_out_path = vrt_out_path + '/'
     outDir = f'{vrt_out_path}{force_folder_name}/'
     if not os.path.exists(outDir):
         os.makedirs(outDir)
-        print('outDir exists')
         print(outDir)
         for i in range(len(ordered_forcetiles[0])):
             vrt = gdal.BuildVRT(f'{outDir}{force_folder_name}_{str(i)}.vrt', [tilefile[i] for tilefile in ordered_forcetiles], separate = False)
