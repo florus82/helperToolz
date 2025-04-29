@@ -77,9 +77,9 @@ class AI4BNormal_S2(object):
     class for Normalization of images, per channel, in format CHW 
     """
     def __init__(self):
-
-        self._mean_s2 = np.array([5.4418573e+02, 7.6761194e+02, 7.1712860e+02, 2.8561428e+03 ]).astype(np.float32) 
-        self._std_s2  = np.array( [3.7141626e+02, 3.8981952e+02, 4.7989127e+02 ,9.5173022e+02]).astype(np.float32) 
+        # for NDVI zeros have to be added at the end??
+        self._mean_s2 = np.array([5.4418573e+02, 7.6761194e+02, 7.1712860e+02, 2.8561428e+03, 0]).astype(np.float32) 
+        self._std_s2  = np.array( [3.7141626e+02, 3.8981952e+02, 4.7989127e+02 ,9.5173022e+02, 0]).astype(np.float32) 
 
     def __call__(self,img):
         temp = img.astype(np.float32)

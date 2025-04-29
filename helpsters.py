@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from osgeo import gdal
 import matplotlib.pyplot as plt
-import higra as hg
+#import higra as hg
 import math
 import os
 import time
@@ -11,7 +11,7 @@ import osgeo
 from osgeo import ogr, osr
 import random
 import xml.etree.ElementTree as ET
-from skimage import measure
+#from skimage import measure
 
 
 #####################################################################################
@@ -526,7 +526,7 @@ def loadVRTintoNumpyAI4(vrtPath):
 ##################################################################################### 
 
 ########### sub-functions
-def export_intermediate_products(row_col_start, intermediate_aray, dummy_gt, dummy_proj, folder_out, filename, noData=None):
+def export_intermediate_products(row_col_start, intermediate_aray, dummy_gt, dummy_proj, folder_out, filename, noData=None, typ='int'):
     '''
     intermediate_aray: array to be exported
     dummy_gt + dummy_proj: GetGeotransform() and GetProjection from a gdal.Open object that contains desired geoinformation
@@ -538,9 +538,12 @@ def export_intermediate_products(row_col_start, intermediate_aray, dummy_gt, dum
 
     row_start = int(row_col_start.split('_')[0])
     col_start = int(row_col_start.split('_')[1])
-   
+    
+    typi = gdal.GDT_Int32
+    if typ == 'float':
+        typi = gdal.GDT_Float32
     out_ds = gdal.GetDriverByName('GTiff').Create(f'{folder_out}{filename}', 
-                                                intermediate_aray.shape[1], intermediate_aray.shape[0], 1, gdal.GDT_Int32)
+                                                intermediate_aray.shape[1], intermediate_aray.shape[0], 1, typi)
     # change the Geotransform for each chip
     geotf = list(dummy_gt)
     # get column and rows from filenames

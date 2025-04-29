@@ -339,7 +339,7 @@ class RocksDBDataset(torch.utils.data.Dataset):
                  transform=None,
                  lru_cache=0.01,
                  lru_cache_compr=0.01,
-                 num_workers = 4,
+                 num_workers = 5,
                  read_only=True):
         super().__init__()
 
