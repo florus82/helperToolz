@@ -84,6 +84,18 @@ class LandsatETFileManager:
             dates  = list(dict.fromkeys(dates))
         return dates
     
+    def get_all_dates_by_year_and_month(self, year, month, unique=False):
+        matching_files = []
+        for date, files in self.date_to_files.items():
+            if date.year == year and date.month == month: # works because it is a datetime object
+                for file in files:
+                    matching_files.append((date, file))
+        matching_files.sort()
+        dates = [date for date, file in matching_files]
+        if unique:
+            dates  = list(dict.fromkeys(dates))
+        return dates
+    
     def get_by_year_and_month(self, year, month):
         matching_files = []
         for date, files in self.date_to_files.items():
