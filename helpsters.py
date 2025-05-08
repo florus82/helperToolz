@@ -558,17 +558,18 @@ def export_intermediate_products(row_col_start, intermediate_aray, dummy_gt, dum
         out_ds.GetRasterBand(1).SetNoDataValue(noData)
     del out_ds
 
-def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None):
+def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None, gdalType = None):
     '''
     exports an np.array to a tif, based on a tif that has the same extent. Probably, the np.array is a manipulation of that tif
     array: the numpy array
     tif_path: path to the tif from which geoinformation will be extracted
     path_to_file_out: where the new tif should be stored
     noData = a no data value can be assigned to the exported tif
+    gdaType = a different data type can be set here, otherwise, the one from hte tif at tif_path will be used
     '''
     ds = gdal.Open(tif_path)
     gtiff_driver = gdal.GetDriverByName('GTiff')
-    out_ds = gtiff_driver.Create(path_to_file_out, ds.RasterXSize, ds.RasterYSize, 1, gdal.GDT_UInt32)
+    out_ds = gtiff_driver.Create(path_to_file_out, ds.RasterXSize, ds.RasterYSize, 1, ds.GetRasterBand(1).DataType)
     out_ds.SetGeoTransform(ds.GetGeoTransform())
     out_ds.SetProjection(ds.GetProjection())             
     out_ds.GetRasterBand(1).WriteArray(array)
@@ -643,7 +644,7 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
     export_intermediate_products(row_col_start, instances_pred, dummy_gt, dummy_proj,\
                                   intermediate_path, filename=f'{t_ext}_{t_bound}_instance_pred_{row_col_start}.tif', noData=0)
 
-    # get instances from ground truth label
+    # get instances from ground truth label; already done globally during joblist creation
     # binary_true = extent_true > 0
     # instances_true = measure.label(binary_true, background=0, connectivity=1)
     instances_true = extent_true
@@ -747,8 +748,8 @@ def get_IoUs_per_Tile(tile, row_col_start, extent_true, extent_pred, boundary_pr
     res = dict(zip(k, v))
 
     # set the parameter combinations and test combinations
-    t_exts = [i/100 for i in range(10,55,5)] 
-    t_bounds = [i/100 for i in range(10,55,5)]
+    t_exts = [i/100 for i in range(10,95,5)] 
+    t_bounds = [i/100 for i in range(10,95,5)]
 
     # loop over parameter combinations
     for t_ext in t_exts:
@@ -996,3 +997,9 @@ def commonBoundsCoord(ext):
                'LowerLeftXY': [i['Xmin'], i['Ymin']]}
         cooL.append(coo)
     return cooL
+
+def list_to_uniques(input_list):
+    '''
+    return unique values of input_list
+    '''
+    return list(dict.fromkeys(input_list))
