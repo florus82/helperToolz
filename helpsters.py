@@ -1003,3 +1003,53 @@ def list_to_uniques(input_list):
     return unique values of input_list
     '''
     return list(dict.fromkeys(input_list))
+
+def reprojShapeEPSG(file, epsg):
+    # create spatial reference object
+    sref  = osr.SpatialReference()
+    sref.ImportFromEPSG(epsg)
+    # open the shapefile
+    ds = ogr.Open(file, 1)
+    driv = ogr.GetDriverByName('ESRI Shapefile')  # will select the driver foir our shp-file creation.
+
+    shapeStor = driv.CreateDataSource('/'.join(file.split('/')[:-1]))
+    # get first layer (assuming ESRI is standard) & and create empty output layer with spatial reference plus object type
+    in_lyr = ds.GetLayer()
+    out_lyr = shapeStor.CreateLayer(file.split('/')[-1].split('.')[0] + '_reproj_' + str(epsg), sref, in_lyr.GetGeomType())
+
+# create attribute field
+    out_lyr.CreateFields(in_lyr.schema)
+    # with attributes characteristics
+    out_feat = ogr.Feature(out_lyr.GetLayerDefn())
+
+    for in_feat in in_lyr:
+        geom = in_feat.geometry().Clone()
+        geom.TransformTo(sref)
+        out_feat.SetGeometry(geom)
+        for i in range(in_feat.GetFieldCount()):
+            out_feat.SetField(i, in_feat.GetField(i))
+        out_lyr.CreateFeature(out_feat)
+    shapeStor.Destroy()
+    del ds
+    return('reprojShape done :)')
+
+def get_UTM_zone_from_xml(nc_file_path, xml_file_path_list):
+    '''
+    relatively hard coded
+    nc_file_path: for this nc file, the extracted general xml will be found
+    xml_file_path_list: here will the mattching xml file be searched
+    '''
+    base_name = nc_file_path.rsplit(".", maxsplit=1)[0]  # remove .nc extension
+    f_xml = [f for f in xml_file_path_list if f.startswith(base_name) and f.endswith(("T1.xml", "T2.xml"))][0]
+
+    tree = ET.parse(f_xml)
+    root = tree.getroot()
+
+    # Namespace definieren
+    ns = {"espa": "http://espa.cr.usgs.gov/v2"}
+    # zone_code finden
+    zone_code_elem = root.find(".//espa:zone_code", ns)
+    zone_code = zone_code_elem.text if zone_code_elem is not None else None
+
+    return zone_code
+
