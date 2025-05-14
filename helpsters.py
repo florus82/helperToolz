@@ -354,7 +354,7 @@ def getAccDateTimesByfilename(dicti, filename):
 def exportNCarrayDerivatesInt(ncfile, storPath, fileName, bandname, arr, make_uint16 = False):
 
     gtiff_driver = gdal.GetDriverByName('GTiff')
-    numberOfXpixels, numberOfYpixels, numberofbands = getShapeFromNC(ncfile)
+    numberOfXpixels, numberOfYpixels, _ = getShapeFromNC(ncfile)
 
     typi = gdal.GDT_Float32
     if make_uint16 == True:
@@ -368,6 +368,40 @@ def exportNCarrayDerivatesInt(ncfile, storPath, fileName, bandname, arr, make_ui
     out_ds.GetRasterBand(1).SetDescription(bandname)
     del out_ds
 
+def exportNCarrayDerivatesComp(ncfile, storPath, fileName, bandnames, arr):
+
+    gtiff_driver = gdal.GetDriverByName('GTiff')
+    numberOfXpixels, numberOfYpixels, _ = getShapeFromNC(ncfile)
+
+    out_ds = gtiff_driver.Create(storPath + fileName, numberOfXpixels, numberOfYpixels, arr.shape[2], gdal.GDT_Float32)
+    out_ds.SetGeoTransform(getGeoTransFromNC(ncfile))
+    out_ds.SetProjection(getCRS_WKTfromNC(ncfile))
+    for i in range(arr.shape[2]):
+        out_ds.GetRasterBand(i + 1).WriteArray(arr[:,:,i])
+        out_ds.GetRasterBand(i + 1).SetDescription(bandnames[i])
+    del out_ds
+
+def makeGermanyMaskforNC(path_to_GER_shp, path_to_NC_file):
+    '''
+    makes a raster mask fitting the dimensions of an NC file
+    '''
+    gtiff_driver = gdal.GetDriverByName('GTiff')
+    drvMemR = gdal.GetDriverByName('MEM')
+
+    # load shapefile
+    shp = ogr.Open(path_to_GER_shp, 0)
+    shp_lyr = shp.GetLayer()
+
+    numberOfXpixels, numberOfYpixels, _ = getShapeFromNC(path_to_NC_file)
+    sub = drvMemR.Create('', numberOfXpixels, numberOfYpixels, 1, gdal.GDT_Int16)
+    sub.SetGeoTransform(getGeoTransFromNC(path_to_NC_file))
+    sub.SetProjection(getCRS_WKTfromNC(path_to_NC_file))
+    band = sub.GetRasterBand(1)
+    band.SetNoDataValue(0)
+
+    gdal.RasterizeLayer(sub, [1], shp_lyr, burn_values=[1])
+
+    return sub.ReadAsArray()
 
 #####################################################################################
 #####################################################################################
@@ -1033,7 +1067,7 @@ def reprojShapeEPSG(file, epsg):
     del ds
     return('reprojShape done :)')
 
-def get_UTM_zone_from_xml(nc_file_path, xml_file_path_list):
+def get_UTM_zone_and_corners_from_xml(nc_file_path, xml_file_path_list):
     '''
     relatively hard coded
     nc_file_path: for this nc file, the extracted general xml will be found
@@ -1045,11 +1079,8 @@ def get_UTM_zone_from_xml(nc_file_path, xml_file_path_list):
     tree = ET.parse(f_xml)
     root = tree.getroot()
 
-    # Namespace definieren
+    # define namespace
     ns = {"espa": "http://espa.cr.usgs.gov/v2"}
-    # zone_code finden
-    zone_code_elem = root.find(".//espa:zone_code", ns)
-    zone_code = zone_code_elem.text if zone_code_elem is not None else None
-
-    return zone_code
-
+    return [(elem.text if (elem := root.find(f'.//espa:{term}', ns)) is not None else None) for term in ['zone_code', 'west', 'east', 'north', 'south']]
+       
+  
