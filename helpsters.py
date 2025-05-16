@@ -403,6 +403,104 @@ def makeGermanyMaskforNC(path_to_GER_shp, path_to_NC_file):
 
     return sub.ReadAsArray()
 
+def get_pixel_size_in_target_crs(source_path, reference_path):
+    '''Reprojects source raster to target SRS and returns pixel size in that SRS'''
+    tmp_ds = gdal.Warp('', source_path, dstSRS=getSpatRefRas(reference_path), format='VRT')  # in-memory
+    geotrans = tmp_ds.GetGeoTransform()
+    x_res = geotrans[1]
+    y_res = geotrans[5]
+    return x_res, - y_res
+
+def warp_raster_to_reference(source_path, reference_path, output_path, resampling='bilinear', keepRes=False):
+    '''
+    source_path: the raster to be warped
+    reference_path: the raster to which will be warped
+    output_path: here the warped raster will be stored
+    resampling: method to do resampling, e.g. bilinear, cubic, nearest
+    keepRes: if set to true the warp will be done without changing the resolution of the raster at source_path to that of reference_path; if set to an integer,
+    the pixel size of reference_path will be divided by that integer to gain a new pixel size 
+    '''
+
+    # Open reference raster
+    ref_ds = gdal.Open(reference_path)
+    ref_proj = ref_ds.GetProjection()
+    ref_gt = ref_ds.GetGeoTransform()
+    x_size = ref_ds.RasterXSize
+    y_size = ref_ds.RasterYSize
+
+    # Extract pixel size
+    ref_x_res = ref_gt[1]
+    ref_y_res = -ref_gt[5]  
+
+    # Get bounds: xmin, ymin, xmax, ymax
+    xmin = ref_gt[0]
+    ymax = ref_gt[3]
+    xmax = xmin + ref_x_res * x_size
+    ymin = ymax - ref_y_res * y_size
+
+    # create a temp tif for clipping --> the warp will likely result in an extra column, which will be taken care of by gdal.Translate
+    temp_path = output_path.split('.tif')[0] + 'temp.tif'
+
+    if keepRes and type(keepRes) == int:
+        aim_x_res = ref_x_res / keepRes
+        aim_y_res = ref_y_res / keepRes
+    elif keepRes and type(keepRes) == bool:
+        aim_x_res, aim_y_res = get_pixel_size_in_target_crs(source_path, getSpatRefRas(reference_path))
+    else:
+        aim_x_res = ref_x_res
+        aim_y_res = ref_y_res
+
+    # Set up warp options
+    warp_options = gdal.WarpOptions(
+        format='GTiff',
+        dstSRS=ref_proj,
+        outputBounds=(xmin, ymin, xmax, ymax),
+        xRes=aim_x_res,
+        yRes=aim_y_res,
+        resampleAlg=resampling,
+        targetAlignedPixels=False
+    )
+
+    # Perform reprojection and resampling
+    gdal.Warp(output_path, source_path, options=warp_options)
+
+    # gdal.Translate(
+    #     output_path,
+    #     temp_path,
+    #     projWin=(xmin, ymax, xmax, ymin)
+    # )
+
+    # os.remove(temp_path)
+
+    print(f"Raster warped and saved to: {output_path}")
+
+def mask_raster(path_to_source, path_to_mask, outPath, noData=False):
+    '''
+    path_to_source: the raster that will be masked
+    path_to_mask: the 0/1 raster mask
+    outPath = masked raster will be stored here
+    noData = a integer can be passed which will be set to 0
+    '''
+    source_ds = gdal.Open(path_to_source)
+    source_band = source_ds.GetRasterBand(1)
+    source_arr = source_band.ReadAsArray()
+
+    mask_ds = gdal.Open(path_to_mask)
+    mask_array = mask_ds.GetRasterBand(1).ReadAsArray()
+
+    # Apply mask: set source data to nodata where mask == 0
+    masked_array = np.where(mask_array == 0, 0, source_arr)
+    if noData:
+        masked_array[masked_array == noData] = 0
+
+    masked_ds = gdal.GetDriverByName('GTiff').Create(outPath, source_ds.RasterXSize, source_ds.RasterYSize, 1, source_band.DataType)
+    masked_ds.SetGeoTransform(source_ds.GetGeoTransform())
+    masked_ds.SetProjection(source_ds.GetProjection())
+    masked_ds.GetRasterBand(1).WriteArray(masked_array)
+    masked_ds.FlushCache()
+
+    print('masked!')
+
 #####################################################################################
 #####################################################################################
 ################# Preprocess FORCE Output ###########################################
