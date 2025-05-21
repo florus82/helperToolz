@@ -701,7 +701,14 @@ def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None,
     '''
     ds = gdal.Open(tif_path)
     gtiff_driver = gdal.GetDriverByName('GTiff')
-    out_ds = gtiff_driver.Create(path_to_file_out, ds.RasterXSize, ds.RasterYSize, 1, ds.GetRasterBand(1).DataType)
+   
+    if gdalType == None:
+        dtypi = ds.GetRasterBand(1).DataType
+    else:
+        dtypi = gdalType
+
+    out_ds = gtiff_driver.Create(path_to_file_out, ds.RasterXSize, ds.RasterYSize, 1, dtypi)
+
     out_ds.SetGeoTransform(ds.GetGeoTransform())
     out_ds.SetProjection(ds.GetProjection())             
     out_ds.GetRasterBand(1).WriteArray(array)
@@ -1179,6 +1186,21 @@ def get_UTM_zone_and_corners_from_xml(nc_file_path, xml_file_path_list):
 
     # define namespace
     ns = {"espa": "http://espa.cr.usgs.gov/v2"}
-    return [(elem.text if (elem := root.find(f'.//espa:{term}', ns)) is not None else None) for term in ['zone_code', 'west', 'east', 'north', 'south']]
+    utm = root.find(f'.//espa:zone_code', ns).text
+    ul_corner = root.find(
+        ".//espa:projection_information/espa:corner_point[@location='UL']", namespaces=ns
+    )
+    # Extract X and Y values
+    ul_x = float(ul_corner.attrib["x"])
+    ul_y = float(ul_corner.attrib["y"])
+
+    lr_corner = root.find(
+        ".//espa:projection_information/espa:corner_point[@location='LR']", namespaces=ns
+    )
+    # Extract X and Y values
+    lr_x = float(lr_corner.attrib["x"])
+    lr_y = float(lr_corner.attrib["y"])
+
+    return [utm, ul_x, ul_y, lr_x, lr_y]
        
   

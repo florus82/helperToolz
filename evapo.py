@@ -1,4 +1,6 @@
 import datetime
+from osgeo import gdal, osr
+gtiff_driver = gdal.GetDriverByName('GTiff')
 
 class LandsatETFileManager:
     '''
@@ -104,3 +106,103 @@ class LandsatETFileManager:
                     matching_files.append((date, file))
         matching_files.sort()
         return [file for date, file in matching_files]
+    
+
+def xarray_to_gdal_mem(xr_da):
+    
+    # Apply scaling and cast to desired integer type
+    data = xr_da.values
+    height, width = data.shape
+
+    # Auto-detect spatial dimensions
+    dim_names = list(xr_da.dims)
+    y_dim = [d for d in dim_names if 'y' in d.lower() or 'lat' in d.lower()][0]
+    x_dim = [d for d in dim_names if 'x' in d.lower() or 'lon' in d.lower()][0]
+
+    x_coords = xr_da.coords[x_dim].values
+    y_coords = xr_da.coords[y_dim].values
+
+    # Ensure ascending order and consistent resolution
+    xres = float(x_coords[1] - x_coords[0])
+    yres = float(y_coords[1] - y_coords[0])
+    origin_x = float(x_coords[0])
+    origin_y = float(y_coords[0])
+    
+    transform = [origin_x, xres, 0, origin_y, 0, yres]
+
+    # Create in-memory GDAL dataset
+    driver = gdal.GetDriverByName('MEM')
+    ds = driver.Create('', width, height, 1, gdal.GDT_Float32)
+    ds.GetRasterBand(1).WriteArray(data)
+    ds.SetGeoTransform(transform)
+
+    # Set projection if available
+    if hasattr(xr_da, 'rio') and xr_da.rio.crs:
+        srs = osr.SpatialReference()
+        srs.ImportFromWkt(xr_da.rio.crs.to_wkt())
+        ds.SetProjection(srs.ExportToWkt())
+    return ds
+
+def warp_to_template(source_ds, reference_path, outPath, mask_path, resampling='bilinear', outType=gdal.GDT_UInt16):
+    '''
+    source_ds: a gdal.Open() object that will be warped
+    reference_path: the input raster_ds will be warped to the raster stored at thils location
+    outPath: if provided, raster will be exported as tiff to this location
+    mask_path: path to the raster which will be used as mask (should have the same extent/resolution as raster at reference path). WORKS only if outPath provided
+    resampling: method for resampling when warping, e.g. nearest, cubic (default 'bilinear')
+    outType: gdal object can be provided to set datatype of output (default gdal.GDT_UInt16)
+    '''
+    # Open reference raster
+    ref_ds = gdal.Open(reference_path)
+    ref_proj = ref_ds.GetProjection()
+    ref_gt = ref_ds.GetGeoTransform()
+    x_size = ref_ds.RasterXSize
+    y_size = ref_ds.RasterYSize
+
+    # Calculate bounds
+    xmin = ref_gt[0]
+    ymax = ref_gt[3]
+    xres = ref_gt[1]
+    yres = abs(ref_gt[5])
+    xmax = xmin + xres * x_size
+    ymin = ymax - yres * y_size
+
+    # Define in-memory output path
+    mem_path = '/vsimem/warped.tif'
+
+    # Set up warp options
+    warp_options = gdal.WarpOptions(
+        format='GTiff',
+        dstSRS=ref_proj,
+        outputBounds=(xmin, ymin, xmax, ymax),
+        xRes=xres,
+        yRes=yres,
+        resampleAlg=resampling,
+        outputType=outType
+    )
+
+    # Perform reprojection and resampling
+    gdal.Warp(mem_path, source_ds, options=warp_options)
+
+    if outPath:
+        if mask_path:
+             # Open the in-memory file
+            warped_ds = gdal.Open(mem_path)
+            warp_arr = warped_ds.GetRasterBand(1).ReadAsArray()
+            mask_ds = gdal.Open(mask_path)
+            mask_arr = mask_ds.GetRasterBand(1).ReadAsArray()
+            warped_masked = warp_arr * mask_arr
+            target_ds = gtiff_driver.Create(outPath, warped_masked.shape[1] , warped_masked.shape[0], 1, outType)           
+            target_ds.SetGeoTransform(warped_ds.GetGeoTransform())
+            target_ds.SetProjection(warped_ds.GetProjection())
+            band = target_ds.GetRasterBand(1)
+            #band.SetNoDataValue(0)
+            band.WriteArray(warped_masked)
+            del target_ds
+
+        else:
+            gdal.Warp(outPath, source_ds, options=warp_options)
+    else:
+         # Open the in-memory file
+        warped_ds = gdal.Open(mem_path)
+        return warped_ds
