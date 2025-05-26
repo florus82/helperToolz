@@ -143,7 +143,7 @@ def xarray_to_gdal_mem(xr_da):
         ds.SetProjection(srs.ExportToWkt())
     return ds
 
-def warp_to_template(source_ds, reference_path, outPath, mask_path, resampling='bilinear', outType=gdal.GDT_UInt16):
+def warp_to_template(source_ds, reference_path, outPath=None, mask_path=None, resampling='bilinear', outType=gdal.GDT_UInt16):
     '''
     source_ds: a gdal.Open() object that will be warped
     reference_path: the input raster_ds will be warped to the raster stored at thils location

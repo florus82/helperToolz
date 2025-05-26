@@ -516,7 +516,7 @@ def sortListwithOtherlist(list1, list2):
 
 def getBluGrnRedBnrFORCEList(filelist):
     '''Takes a list of paths to an exploded FORCE output and returns a list with ordered paths
-    First all bluem then green, red and bnir bands. Furthermore, paths are chronologically sorted (1,2,3,4..months)'''
+    First all blue then green, red and bnir bands. Furthermore, paths are chronologically sorted (1,2,3,4..months)'''
     blu = [file for file in filelist if file.split('SEN2H_')[-1].split('_')[0] == 'BLU']
     grn = [file for file in filelist if file.split('SEN2H_')[-1].split('_')[0] == 'GRN']
     red = [file for file in filelist if file.split('SEN2H_')[-1].split('_')[0] == 'RED']
@@ -690,7 +690,7 @@ def export_intermediate_products(row_col_start, intermediate_aray, dummy_gt, dum
         out_ds.GetRasterBand(1).SetNoDataValue(noData)
     del out_ds
 
-def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None, gdalType = None):
+def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None, gdalType = None, bands=1):
     '''
     exports an np.array to a tif, based on a tif that has the same extent. Probably, the np.array is a manipulation of that tif
     array: the numpy array
@@ -698,6 +698,7 @@ def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None,
     path_to_file_out: where the new tif should be stored
     noData = a no data value can be assigned to the exported tif
     gdaType = a different data type can be set here, otherwise, the one from hte tif at tif_path will be used
+    bands = default single band raster, provide the integer of bands to export as stack
     '''
     ds = gdal.Open(tif_path)
     gtiff_driver = gdal.GetDriverByName('GTiff')
@@ -707,13 +708,19 @@ def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None,
     else:
         dtypi = gdalType
 
-    out_ds = gtiff_driver.Create(path_to_file_out, ds.RasterXSize, ds.RasterYSize, 1, dtypi)
-
+    out_ds = gtiff_driver.Create(path_to_file_out, ds.RasterXSize, ds.RasterYSize, bands, dtypi)
     out_ds.SetGeoTransform(ds.GetGeoTransform())
-    out_ds.SetProjection(ds.GetProjection())             
-    out_ds.GetRasterBand(1).WriteArray(array)
-    if noData != None:
-        out_ds.GetRasterBand(1).SetNoDataValue(noData)
+    out_ds.SetProjection(ds.GetProjection())
+    if bands == 1:
+        out_ds.GetRasterBand(1).WriteArray(array)
+        if noData != None:
+            out_ds.GetRasterBand(1).SetNoDataValue(noData)
+    else:
+        for b in range(bands):
+            out_ds.GetRasterBand(b + 1).WriteArray(array[:,:,b])
+        if noData != None:
+            for b in range(bands):
+                out_ds.GetRasterBand(b + 1).SetNoDataValue(noData)
     del out_ds
 
 def makePyramidsForTif(tif_path):
