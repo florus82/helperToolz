@@ -351,7 +351,7 @@ def getAccDateTimesByfilename(dicti, filename):
     else:
         return print(f'Filename {filename} not found!')
 
-def exportNCarrayDerivatesInt(ncfile, storPath, fileName, bandname, arr, make_uint16 = False):
+def exportNCarrayDerivatesInt(ncfile, storPath, fileName, bandname, arr, make_uint16 = False, numberOfBands=1):
 
     gtiff_driver = gdal.GetDriverByName('GTiff')
     numberOfXpixels, numberOfYpixels, _ = getShapeFromNC(ncfile)
@@ -360,12 +360,16 @@ def exportNCarrayDerivatesInt(ncfile, storPath, fileName, bandname, arr, make_ui
     if make_uint16 == True:
         typi = gdal.GDT_Int16
 
-    out_ds = gtiff_driver.Create(storPath + fileName, numberOfXpixels, numberOfYpixels, 1, typi)
+    out_ds = gtiff_driver.Create(storPath + fileName, numberOfXpixels, numberOfYpixels, numberOfBands, typi)
     out_ds.SetGeoTransform(getGeoTransFromNC(ncfile))
     out_ds.SetProjection(getCRS_WKTfromNC(ncfile))
-    out_ds.GetRasterBand(1).WriteArray(arr)
-
-    out_ds.GetRasterBand(1).SetDescription(bandname)
+    if numberOfBands == 1:
+        out_ds.GetRasterBand(1).WriteArray(arr)
+        out_ds.GetRasterBand(1).SetDescription(bandname)
+    else:
+        for i in range(numberOfBands):
+            out_ds.GetRasterBand(i+1).WriteArray(arr[:, :, i])
+            out_ds.GetRasterBand(i+1).SetDescription(bandname[i])
     del out_ds
 
 def exportNCarrayDerivatesComp(ncfile, storPath, fileName, bandnames, arr):
