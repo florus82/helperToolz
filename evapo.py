@@ -203,6 +203,14 @@ def warp_to_template(source_ds, reference_path, outPath=None, mask_path=None, re
         else:
             gdal.Warp(outPath, source_ds, options=warp_options)
     else:
-         # Open the in-memory file
+        # Open the in-memory file
         warped_ds = gdal.Open(mem_path)
-        return warped_ds
+        warped_arr = warped_ds.GetRasterBand(1).ReadAsArray()
+        if not mask_path:
+            return warped_arr
+        else:
+            mask_ds = gdal.Open(mask_path)
+            mask_arr = mask_ds.GetRasterBand(1).ReadAsArray()
+            warped_masked = warped_arr * mask_arr
+            return warped_masked
+            
