@@ -11,6 +11,7 @@ import osgeo
 from osgeo import ogr, osr
 import random
 import xml.etree.ElementTree as ET
+import re
 #from skimage import measure
 
 
@@ -533,6 +534,31 @@ def getBluGrnRedBnrFORCEList(filelist):
 
     return sum([blu, grn, red, bnr], [])
 
+def getBluGrnRedBnrANDmoreFORCEList(filelist):
+    '''Takes a list of paths to an exploded FORCE output and returns a list with ordered paths
+    First all blue then green, red and bnir bands. Furthermore, paths are chronologically sorted (1,2,3,4..months)'''
+    blu = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'BLU']
+    grn = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'GRN']
+    red = [file for file in filelist if file.split('SEN2l_')[-1].split('_')[0] == 'RED']
+    bnr = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'BNR']
+    re1 = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'RE1']
+    re2 = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'RE2']
+    re3 = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'RE3']
+    sw1 = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'SW1']
+    sw2 = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'SW2']
+
+    blu = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in blu], blu)[-1]
+    grn = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in grn], grn)[-1]
+    red = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in red], red)[-1]
+    bnr = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in bnr], bnr)[-1]
+    re1 = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in re1], re1)[-1]
+    re2 = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in re2], re2)[-1]
+    re3 = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in re3], re3)[-1]
+    sw1 = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in sw1], sw1)[-1]
+    sw2 = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in sw2], sw2)[-1]
+
+    return sum([blu, grn, red, bnr, re1, re2, re3, sw1, sw2], [])
+
 def getFORCExyRange(tiles):
     '''take a list of subsetted FORCE Tile names in the Form of X0069_Y0042 and returns a string to be used as filename 
     that gives X and Y range ,e.g. Force_X_from_68_to_69_Y_from_42_to_42'''
@@ -554,13 +580,6 @@ def convertVRTpathsTOrelative(vrt_path):
     # Save the modified VRT file
     tree.write(vrt_path)
 
-def sortListwithOtherlist(list1, list2):
-    ''' list1: unsorted list
-        list2: unsorted list with same length as list1
-        Sorts list2 based on sorted(list1). Returns sorted list1 list2'''
-    sortlist1, sortlist2 = zip(*sorted(zip(list1, list2)))
-    return list(sortlist1), list(sortlist2)
-
 def vrtPyramids(vrtpath):
     '''takes a vrtpath (or gdalOpened vrt) and produces pyramids'''
     if type(vrtpath) == osgeo.gdal.Dataset:
@@ -574,15 +593,26 @@ def vrtPyramids(vrtpath):
 def reduce_force_to_validmonths(path_to_forceoutput, start_month_int, end_month_int):
     '''path_to_forceoutput: path of stored force output (quite likely you want the folder in which all tile folders are)
     start_month_int & end_month_int: e.g. 3 for march and 8 for August
+    Please note: The filter will look for the YYYYMMDD characters that come right before .tif
     '''
     # get rid of force output that is not needed -> months outside of growing season that do not exist in AI4Boundaries
     files = getFilelist(path_to_forceoutput, '.tif', deep=True)
 
-    filesToKill = [f for f in files if int(f.split('-')[-1].split('.')[0]) not in [i for i in range(start_month_int, end_month_int + 1, 1)]]
+    #filesToKill = [f for f in files if int(f.split('-')[-1].split('.')[0]) not in [i for i in range(start_month_int, end_month_int + 1, 1)]]
+    filesToKill = [f for f in files if int(re.search(r'(\d{4})(\d{2})(\d{2})\.tif$', f)[2]) not in [i for i in range(start_month_int, end_month_int + 1, 1)]]
+
     for file in filesToKill:
         RasterKiller(file)
 
     return list(filter(lambda item: item not in filesToKill, files))
+
+def get_forceTSI_output_DOYS(listOfFORCEoutput):
+    '''
+    Will return a sorted list of unique DOYs in format YYYYMMDD. Please note, that this only works with files in FORCE naming convention, where
+    the date will be used that is at the end of the filename (YYYYMMDD.tif)
+    listOfFORCEoutput: list with paths to tif files from FORCE TSI output
+    '''
+    return sorted(list(set([re.search(r'(\d{4})(\d{2})(\d{2})\.tif$', file)[0].split('.tif')[0] for file in listOfFORCEoutput])))
 
 def get_forcetiles_range(list_of_forcefiles):
     '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
@@ -597,7 +627,7 @@ def force_order_BGRBNR(list_of_forcefiles):
     tilefilesL = []
     for tile in tiles:
         tilefiles = [file for file in list_of_forcefiles if tile in file]
-        tilefilesL.append(getBluGrnRedBnrFORCEList(tilefiles))
+        tilefilesL.append(getBluGrnRedBnrANDmoreFORCEList(tilefiles))
     
     return tilefilesL
 
@@ -1213,5 +1243,28 @@ def get_UTM_zone_and_corners_from_xml(nc_file_path, xml_file_path_list):
     lr_y = float(lr_corner.attrib["y"])
 
     return [utm, ul_x, ul_y, lr_x, lr_y]
-       
-  
+
+def stack_tifs(input_tif_list, output_tif):
+    # Open the first raster to get geotransform, projection, and shape
+    src0 = gdal.Open(input_tif_list[0])
+    x_size = src0.RasterXSize
+    y_size = src0.RasterYSize
+    proj = src0.GetProjection()
+    geotrans = src0.GetGeoTransform()
+    dtype = src0.GetRasterBand(1).DataType
+    num_bands = len(input_tif_list)
+
+    # Create output multi-band raster
+    driver = gdal.GetDriverByName('GTiff')
+    out_ds = driver.Create(output_tif, x_size, y_size, num_bands, dtype)
+    out_ds.SetProjection(proj)
+    out_ds.SetGeoTransform(geotrans)
+
+    # Write each input raster as a band
+    for i, tif_path in enumerate(input_tif_list):
+        src = gdal.Open(tif_path)
+        band_data = src.GetRasterBand(1).ReadAsArray()
+        out_ds.GetRasterBand(i + 1).WriteArray(band_data)
+
+    out_ds.FlushCache()
+    out_ds = None  # Close file 
