@@ -1,3 +1,4 @@
+
 import numpy as np
 import pandas as pd
 from osgeo import gdal
@@ -240,7 +241,7 @@ def subset_mask_to_prediction_extent(path_reference_mask, path_to_prediction_vrt
 
 #####################################################################################
 #####################################################################################
-################# S3 downloads to numpy/tiff files ##################################
+################# S3 downloads and processing #######################################
 #####################################################################################
 ##################################################################################### 
 
@@ -420,7 +421,7 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
     '''
     source_path: the raster to be warped
     reference_path: the raster to which will be warped
-    output_path: here the warped raster will be stored
+    output_path: here the warped raster will be stored; if not provided, the warped raster will be returned as memory object
     resampling: method to do resampling, e.g. bilinear, cubic, nearest
     keepRes: if set to true the warp will be done without changing the resolution of the raster at source_path to that of reference_path; if set to an integer,
     the pixel size of reference_path will be divided by that integer to gain a new pixel size 
@@ -446,18 +447,19 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
     # create a temp tif for clipping --> the warp will likely result in an extra column, which will be taken care of by gdal.Translate
     temp_path = output_path.split('.tif')[0] + 'temp.tif'
 
-    if keepRes and type(keepRes) == int:
+    if isinstance(keepRes, int) and keepRes > 0:
         aim_x_res = ref_x_res / keepRes
         aim_y_res = ref_y_res / keepRes
-    elif keepRes and type(keepRes) == bool:
-        aim_x_res, aim_y_res = get_pixel_size_in_target_crs(source_path, getSpatRefRas(reference_path))
+    elif isinstance(keepRes, bool) and keepRes > 0:
+        aim_x_res, aim_y_res = get_pixel_size_in_target_crs(source_path, reference_path)
     else:
         aim_x_res = ref_x_res
         aim_y_res = ref_y_res
 
+    out_format = 'MEM' if output_path == 'MEM' else 'GTiff'
     # Set up warp options
     warp_options = gdal.WarpOptions(
-        format='GTiff',
+        format=out_format,
         dstSRS=ref_proj,
         outputBounds=(xmin, ymin, xmax, ymax),
         xRes=aim_x_res,
@@ -467,17 +469,19 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
     )
 
     # Perform reprojection and resampling
-    gdal.Warp(output_path, source_path, options=warp_options)
+    warped_ds = gdal.Warp('', source_path, options=warp_options) if output_path == 'MEM' else gdal.Warp(output_path, source_path, options=warp_options)
 
     # gdal.Translate(
     #     output_path,
     #     temp_path,
     #     projWin=(xmin, ymax, xmax, ymin)
     # )
-
     # os.remove(temp_path)
 
-    print(f"Raster warped and saved to: {output_path}")
+    if output_path == 'MEM':
+        return warped_ds
+    else:
+        print(f"Raster warped and saved to: {output_path}")
 
 def mask_raster(path_to_source, path_to_mask, outPath, noData=False):
     '''
@@ -506,6 +510,21 @@ def mask_raster(path_to_source, path_to_mask, outPath, noData=False):
 
     print('masked!')
 
+def getValsatMaxIndex(arr1, arr2):
+    """ This functions extracts values from one array at those indices, where another array has its maximum in values (axis =2),
+    and will return them as np.array(2D)
+
+    Args:
+        arr1 (np.array(3D)): is the array, where the maximum of values are computed across axis=2
+        arr2 (np.array(3D)): is the array from which values will be extracted at those indices where arr1 has its maxima 
+    """
+    # first, take care of np.nan as it messes up the results
+
+    arr_no_nan = np.where(np.isnan(arr1), -np.inf, arr1)
+    idx = np.argmax(arr_no_nan, axis = 2)
+    rows, cols = np.indices(arr1.shape[0:2])
+
+    return arr2[rows, cols, idx]
 #####################################################################################
 #####################################################################################
 ################# Preprocess FORCE Output ###########################################
@@ -533,31 +552,6 @@ def getBluGrnRedBnrFORCEList(filelist):
     bnr = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in bnr], bnr)[-1]
 
     return sum([blu, grn, red, bnr], [])
-
-def getBluGrnRedBnrANDmoreFORCEList(filelist):
-    '''Takes a list of paths to an exploded FORCE output and returns a list with ordered paths
-    First all blue then green, red and bnir bands. Furthermore, paths are chronologically sorted (1,2,3,4..months)'''
-    blu = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'BLU']
-    grn = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'GRN']
-    red = [file for file in filelist if file.split('SEN2l_')[-1].split('_')[0] == 'RED']
-    bnr = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'BNR']
-    re1 = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'RE1']
-    re2 = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'RE2']
-    re3 = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'RE3']
-    sw1 = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'SW1']
-    sw2 = [file for file in filelist if file.split('SEN2L_')[-1].split('_')[0] == 'SW2']
-
-    blu = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in blu], blu)[-1]
-    grn = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in grn], grn)[-1]
-    red = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in red], red)[-1]
-    bnr = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in bnr], bnr)[-1]
-    re1 = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in re1], re1)[-1]
-    re2 = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in re2], re2)[-1]
-    re3 = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in re3], re3)[-1]
-    sw1 = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in sw1], sw1)[-1]
-    sw2 = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in sw2], sw2)[-1]
-
-    return sum([blu, grn, red, bnr, re1, re2, re3, sw1, sw2], [])
 
 def getFORCExyRange(tiles):
     '''take a list of subsetted FORCE Tile names in the Form of X0069_Y0042 and returns a string to be used as filename 
@@ -590,7 +584,7 @@ def vrtPyramids(vrtpath):
     Image.BuildOverviews("NEAREST", [2,4,8,16,32,64])
     del Image
 
-def reduce_force_to_validmonths(path_to_forceoutput, start_month_int, end_month_int):
+def reduce_forceTSI_output_to_validmonths(path_to_forceoutput, start_month_int, end_month_int):
     '''path_to_forceoutput: path of stored force output (quite likely you want the folder in which all tile folders are)
     start_month_int & end_month_int: e.g. 3 for march and 8 for August
     Please note: The filter will look for the YYYYMMDD characters that come right before .tif
@@ -614,6 +608,26 @@ def get_forceTSI_output_DOYS(listOfFORCEoutput):
     '''
     return sorted(list(set([re.search(r'(\d{4})(\d{2})(\d{2})\.tif$', file)[0].split('.tif')[0] for file in listOfFORCEoutput])))
 
+def get_forceTSI_output_Tiles(listOfFORCEoutput):
+    """
+    Will return a sorted list of unique Tiles Ids(e.g. 'X0057_Y0044')
+
+    Args:
+        listOfFORCEoutput (list): list with paths to tif files from FORCE TSI output
+    """
+    return sorted(list(set([re.search(r'X\d{4}_Y\d{4}',file)[0] for file in listOfFORCEoutput])))
+
+def createFORCEtileLIST(xlist, ylist):
+    """
+    Create a list, which entries resemble FORCE tile IDs in the format 'X00xx_Y00yy'
+    Args:
+        x_list (list of integer): each x tile coordinate will be paired with the y tile coordinate at the same index at ylist
+        ylist (list of integer): each y tile coordinate will be paired with the x tile coordinate at the same index at xlist
+        e.g. xlist[0] = 10 and ylist[0] = 20 --> 'X0010_Y0020'
+    """
+
+    return [f'X{x:04d}_Y{y:04d}' for x, y in zip(xlist, ylist)]
+
 def get_forcetiles_range(list_of_forcefiles):
     '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
     creats a string that indicates X and Y extremes from list_of_forcefiles'''
@@ -627,7 +641,7 @@ def force_order_BGRBNR(list_of_forcefiles):
     tilefilesL = []
     for tile in tiles:
         tilefiles = [file for file in list_of_forcefiles if tile in file]
-        tilefilesL.append(getBluGrnRedBnrANDmoreFORCEList(tilefiles))
+        tilefilesL.append(getBluGrnRedBnrFORCEList(tilefiles))
     
     return tilefilesL
 
@@ -1183,6 +1197,9 @@ def list_to_uniques(input_list):
     return unique values of input_list
     '''
     return list(dict.fromkeys(input_list))
+
+def is_leap_year(year):
+    return (year % 4 == 0) and (year % 100 != 0 or year % 400 == 0)
 
 def reprojShapeEPSG(file, epsg):
     # create spatial reference object
