@@ -1,4 +1,4 @@
-
+from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 from osgeo import gdal
@@ -245,6 +245,15 @@ def subset_mask_to_prediction_extent(path_reference_mask, path_to_prediction_vrt
 #####################################################################################
 ##################################################################################### 
 
+def convertTimestamp_to_INT(timestamp):
+    """_converts a Timestamp object (e.g. Timestamp('2020-01-01 09:26:00') into an arbitrary integer (e.g. 20200101092600)
+
+    Args:
+        timestamp (Timestamp): the Timestamp to be converted
+    """
+    dat_str = str(timestamp)
+    return int(''.join(''.join(''.join(dat_str.split('-')).split(':')).split(' ')))
+
 def getAllDatesS3(listOfFiles, year='all'):
     '''Takes a list of paths of .nc files for Sentinel-3 if year == all, all paths are considered. 
     If a year is provided, the dates are only extracted for the corresponding yearand is returned 
@@ -286,14 +295,22 @@ def getShapeFromNC(ncfile):
         ncfile = xr.open_dataset(ncfile)
     return len(ncfile.coords['x'].values), len(ncfile.coords['y'].values), ncfile[','.join(ncfile.data_vars.keys()).split(',')[-1]].shape[0]
 
-def getDataFromNC(ncfile):
+def getDataFromNC_LST(ncfile):
     '''Takes a path to an ncfile or an xarray_dataset and returns a 3D numpy array of the data'''
     
     if type(ncfile) == str:
         ncfile = xr.open_dataset(ncfile)
-    arr = ncfile[[b for b in ','.join(ncfile.data_vars.keys()).split(',') if b == 'LST'][0]].to_numpy() # makes sure that LST exists
+    arr = ncfile[[b for b in ','.join(ncfile.data_vars.keys()).split(',') if (b == 'LST')][0]].to_numpy() # makes sure that LST exists
     return np.swapaxes(np.swapaxes(arr, 0, 1), 1, 2)
+
+def getDataFromNC_VZA(ncfile):
+    '''Takes a path to an ncfile or an xarray_dataset and returns a 3D numpy array of the data'''
     
+    if type(ncfile) == str:
+        ncfile = xr.open_dataset(ncfile)
+    arr = ncfile[[b for b in ','.join(ncfile.data_vars.keys()).split(',') if (b == 'viewZenithAngles')][0]].to_numpy() # makes sure that LST exists
+    return np.swapaxes(np.swapaxes(arr, 0, 1), 1, 2)
+
 def getCRS_WKTfromNC(ncfile):
     '''Takes a path to an ncfile or an xarray_dataset and returns coordinate sys as wkt'''
     
@@ -301,7 +318,7 @@ def getCRS_WKTfromNC(ncfile):
         ncfile = xr.open_dataset(ncfile)
     return ncfile['crs'].attrs['crs_wkt']
 
-def convertNCtoTIF(ncfile, storPath, fileName, accDT, make_uint16 = False, explode=False):
+def convertNCtoTIF(ncfile, storPath, fileName, accDT, make_uint16 = False, explode=False, LST=True):
     '''Converts a filepath to an nc file or a .nc file to a .tif with option to store it UINT16 (Kelvin values are multiplied by 100 before decimals are cut off)'''
     
     gtiff_driver = gdal.GetDriverByName('GTiff')
@@ -309,7 +326,10 @@ def convertNCtoTIF(ncfile, storPath, fileName, accDT, make_uint16 = False, explo
     geoWKT = getCRS_WKTfromNC(ncfile)
     typi = gdal.GDT_Float64
     numberOfXpixels, numberOfYpixels, numberofbands = getShapeFromNC(ncfile)
-    dat = getDataFromNC(ncfile)
+    if LST:
+        dat = getDataFromNC_LST(ncfile)
+    else:
+        dat = getDataFromNC_VZA(ncfile)
     noDataVal = np.nan
 
     if make_uint16 == True:
@@ -469,7 +489,9 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
     )
 
     # Perform reprojection and resampling
-    warped_ds = gdal.Warp('', source_path, options=warp_options) if output_path == 'MEM' else gdal.Warp(output_path, source_path, options=warp_options)
+    warped_ds = gdal.Warp('', source_path, options=warp_options) if explode == True else gdal.Warp(output_path, source_path, options=warp_options)
+
+
 
     # gdal.Translate(
     #     output_path,
@@ -482,6 +504,82 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
         return warped_ds
     else:
         print(f"Raster warped and saved to: {output_path}")
+
+def warp_ERA5_to_reference(grib_path, reference_path, output_path, resampling='bilinear', NoData=False, explode=True):
+    """Warps a ERA .gib file to an existing raster in terms of resolution, projection, extent and aligns to raster
+
+    Args:
+        grib_path (str): complete path to the grib file
+        reference_path (str): complete path to the raster to which the grib dataset will be warped to
+        output_path (str): path to onlythe directory, where the raster stacks will be stored. The name will be determined from the .grib file
+        resampling (str, optional): _description_. Defaults to 'bilinear'.
+        bands (list_of_int, optional): Defaults to 'ALL'. A subset of bands needs to be provided as a list of integer values
+        NoData (int, optional): if not provided, the function will try to retrieve the NoData value from the dataset
+        explode (Boolean): If True, every band will be exported as a single band tiff
+    """
+    if output_path.endswith('/'):
+        storPath = f'{output_path}{grib_path.split('/')[-1].split('.')[0]}'
+    else:
+        storPath = f'{output_path}/{grib_path.split('/')[-1].split('.')[0]}'
+  
+    # Open datasets
+    ref_ds = gdal.Open(reference_path)
+    src_ds = gdal.Open(grib_path)
+
+    if NoData:
+        nodat = NoData
+    else:
+        try:
+            nodat = src_ds[list(src_ds.data_vars.keys())[0]].attrs['GRIB_missingValue']
+        except:
+            nodat = -9999
+
+    # Get geotransform and projection from reference
+    gt = ref_ds.GetGeoTransform()
+    proj = ref_ds.GetProjection()
+
+    # Calculate bounds
+    xmin = gt[0]
+    ymax = gt[3]
+    xres = gt[1]
+    yres = -gt[5]
+    xmax = xmin + ref_ds.RasterXSize * xres
+    ymin = ymax - ref_ds.RasterYSize * yres
+
+    warp_options = gdal.WarpOptions(
+        format='MEM' if explode == True else 'GTiff',
+        dstSRS=proj,
+        xRes=xres,
+        yRes=yres,
+        outputBounds=(xmin, ymin, xmax, ymax),
+        resampleAlg=resampling,
+        dstNodata=nodat,
+        # targetAlignedPixels=True
+    )
+
+    # Perform reprojection and resampling
+    warped_ds = gdal.Warp('', grib_path, options=warp_options) if output_path == 'MEM' else gdal.Warp(storPath + '.tif', grib_path, options=warp_options)
+
+    if warped_ds:
+
+        bandCount = warped_ds.RasterCount
+
+        for i in range(bandCount):
+
+            band = warped_ds.GetRasterBand(i+1)
+            bandname = datetime.fromtimestamp(int(band.GetMetadata()['GRIB_VALID_TIME']), tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+
+            out_ds = gdal.GetDriverByName('GTiff').Create(storPath + f'_{i+1}.tif',
+                                                          warped_ds.RasterXSize,
+                                                          warped_ds.RasterYSize,
+                                                          1, gdal.GDT_Float32)
+            out_ds.SetGeoTransform(warped_ds.GetGeoTransform())
+            out_ds.SetProjection(warped_ds.GetProjection())
+            out_ds.GetRasterBand(1).WriteArray(band.ReadAsArray())
+            out_ds.GetRasterBand(1).SetNoDataValue(nodat)
+            out_ds.GetRasterBand(1).SetDescription(bandname)
+            del out_ds
+            
 
 def mask_raster(path_to_source, path_to_mask, outPath, noData=False):
     '''
@@ -613,10 +711,32 @@ def get_forceTSI_output_Tiles(listOfFORCEoutput):
     Will return a sorted list of unique Tiles Ids(e.g. 'X0057_Y0044')
 
     Args:
-        listOfFORCEoutput (list): list with paths to tif files from FORCE TSI output
+        listOfFORCEoutput (list_of_strings): list with paths to tif files from FORCE TSI output
     """
     return sorted(list(set([re.search(r'X\d{4}_Y\d{4}',file)[0] for file in listOfFORCEoutput])))
 
+def check_forceTSI_compositionDates(listOfFORCEoutput):
+    """_summary_
+
+    Args:
+        listOfFORCEoutput (list_of_strings): list with paths to tif files from FORCE TSI output
+    """
+    fatal_check = 0
+    date_list = []
+    tiles = get_forceTSI_output_Tiles(listOfFORCEoutput)
+    for tile in tiles:
+        date_list.append((get_forceTSI_output_DOYS([file for file in listOfFORCEoutput if tile in file])))
+    for i in range(0,len(date_list)-1):
+        if date_list[i] == date_list[i + 1]:
+            continue
+        else:
+            fatal_check = 1
+    if fatal_check:
+        print('the doys of composites across tiles is not equal - Better check!!!!! - No date list returned!!!!!!')
+    else:
+        print('all dates of composites are the same :)')
+        return date_list[0]
+    
 def createFORCEtileLIST(xlist, ylist):
     """
     Create a list, which entries resemble FORCE tile IDs in the format 'X00xx_Y00yy'
@@ -750,7 +870,7 @@ def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None,
     '''
     ds = gdal.Open(tif_path)
     gtiff_driver = gdal.GetDriverByName('GTiff')
-   
+    no_data = ds.GetRasterBand(1).GetNoDataValue()
     if gdalType == None:
         dtypi = ds.GetRasterBand(1).DataType
     else:
@@ -763,12 +883,19 @@ def makeTif_np_to_matching_tif(array, tif_path, path_to_file_out, noData = None,
         out_ds.GetRasterBand(1).WriteArray(array)
         if noData != None:
             out_ds.GetRasterBand(1).SetNoDataValue(noData)
+        else:
+            if no_data is not None:
+                out_ds.GetRasterBand(1).SetNoDataValue(no_data)
     else:
         for b in range(bands):
             out_ds.GetRasterBand(b + 1).WriteArray(array[:,:,b])
         if noData != None:
             for b in range(bands):
                 out_ds.GetRasterBand(b + 1).SetNoDataValue(noData)
+        else:
+            if no_data is not None:
+                out_ds.GetRasterBand(b + 1).SetNoDataValue(no_data)
+
     del out_ds
 
 def makePyramidsForTif(tif_path):
