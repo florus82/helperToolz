@@ -1,18 +1,15 @@
-from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 from osgeo import gdal
 import matplotlib.pyplot as plt
 #import higra as hg
-import math
 import os
-import time
 import xarray as xr 
 import osgeo
 from osgeo import ogr, osr
-import random
 import xml.etree.ElementTree as ET
 import re
+from itertools import chain
 #from skimage import measure
 
 
@@ -245,15 +242,6 @@ def subset_mask_to_prediction_extent(path_reference_mask, path_to_prediction_vrt
 #####################################################################################
 ##################################################################################### 
 
-def convertTimestamp_to_INT(timestamp):
-    """_converts a Timestamp object (e.g. Timestamp('2020-01-01 09:26:00') into an arbitrary integer (e.g. 20200101092600)
-
-    Args:
-        timestamp (Timestamp): the Timestamp to be converted
-    """
-    dat_str = str(timestamp)
-    return int(''.join(''.join(''.join(dat_str.split('-')).split(':')).split(' ')))
-
 def getAllDatesS3(listOfFiles, year='all'):
     '''Takes a list of paths of .nc files for Sentinel-3 if year == all, all paths are considered. 
     If a year is provided, the dates are only extracted for the corresponding yearand is returned 
@@ -373,14 +361,15 @@ def getAccDateTimesByfilename(dicti, filename):
     else:
         return print(f'Filename {filename} not found!')
 
-def exportNCarrayDerivatesInt(ncfile, storPath, fileName, bandname, arr, make_uint16 = False, numberOfBands=1):
+def exportNCarrayDerivatesInt(ncfile, storPath, fileName, bandname, arr, datType = None, numberOfBands=1, noData=None):
 
     gtiff_driver = gdal.GetDriverByName('GTiff')
     numberOfXpixels, numberOfYpixels, _ = getShapeFromNC(ncfile)
 
-    typi = gdal.GDT_Float32
-    if make_uint16 == True:
-        typi = gdal.GDT_Int16
+    if datType == None:
+        typi = gdal.GDT_Float32
+    else:
+        typi = datType
 
     out_ds = gtiff_driver.Create(storPath + fileName, numberOfXpixels, numberOfYpixels, numberOfBands, typi)
     out_ds.SetGeoTransform(getGeoTransFromNC(ncfile))
@@ -388,10 +377,14 @@ def exportNCarrayDerivatesInt(ncfile, storPath, fileName, bandname, arr, make_ui
     if numberOfBands == 1:
         out_ds.GetRasterBand(1).WriteArray(arr)
         out_ds.GetRasterBand(1).SetDescription(bandname)
+        if noData is not None:
+            out_ds.GetRasterBand(1).SetNoDataValue(noData)
     else:
         for i in range(numberOfBands):
             out_ds.GetRasterBand(i+1).WriteArray(arr[:, :, i])
             out_ds.GetRasterBand(i+1).SetDescription(bandname[i])
+            if noData is not None:
+                out_ds.GetRasterBand(i+1).SetNoDataValue(noData)
     del out_ds
 
 def exportNCarrayDerivatesComp(ncfile, storPath, fileName, bandnames, arr):
@@ -489,7 +482,7 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
     )
 
     # Perform reprojection and resampling
-    warped_ds = gdal.Warp('', source_path, options=warp_options) if explode == True else gdal.Warp(output_path, source_path, options=warp_options)
+    warped_ds = gdal.Warp('', source_path, options=warp_options) if out_format == 'MEM' else gdal.Warp(output_path, source_path, options=warp_options)
 
 
 
@@ -505,80 +498,7 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
     else:
         print(f"Raster warped and saved to: {output_path}")
 
-def warp_ERA5_to_reference(grib_path, reference_path, output_path, resampling='bilinear', NoData=False, explode=True):
-    """Warps a ERA .gib file to an existing raster in terms of resolution, projection, extent and aligns to raster
 
-    Args:
-        grib_path (str): complete path to the grib file
-        reference_path (str): complete path to the raster to which the grib dataset will be warped to
-        output_path (str): path to onlythe directory, where the raster stacks will be stored. The name will be determined from the .grib file
-        resampling (str, optional): _description_. Defaults to 'bilinear'.
-        bands (list_of_int, optional): Defaults to 'ALL'. A subset of bands needs to be provided as a list of integer values
-        NoData (int, optional): if not provided, the function will try to retrieve the NoData value from the dataset
-        explode (Boolean): If True, every band will be exported as a single band tiff
-    """
-    if output_path.endswith('/'):
-        storPath = f'{output_path}{grib_path.split('/')[-1].split('.')[0]}'
-    else:
-        storPath = f'{output_path}/{grib_path.split('/')[-1].split('.')[0]}'
-  
-    # Open datasets
-    ref_ds = gdal.Open(reference_path)
-    src_ds = gdal.Open(grib_path)
-
-    if NoData:
-        nodat = NoData
-    else:
-        try:
-            nodat = src_ds[list(src_ds.data_vars.keys())[0]].attrs['GRIB_missingValue']
-        except:
-            nodat = -9999
-
-    # Get geotransform and projection from reference
-    gt = ref_ds.GetGeoTransform()
-    proj = ref_ds.GetProjection()
-
-    # Calculate bounds
-    xmin = gt[0]
-    ymax = gt[3]
-    xres = gt[1]
-    yres = -gt[5]
-    xmax = xmin + ref_ds.RasterXSize * xres
-    ymin = ymax - ref_ds.RasterYSize * yres
-
-    warp_options = gdal.WarpOptions(
-        format='MEM' if explode == True else 'GTiff',
-        dstSRS=proj,
-        xRes=xres,
-        yRes=yres,
-        outputBounds=(xmin, ymin, xmax, ymax),
-        resampleAlg=resampling,
-        dstNodata=nodat,
-        # targetAlignedPixels=True
-    )
-
-    # Perform reprojection and resampling
-    warped_ds = gdal.Warp('', grib_path, options=warp_options) if output_path == 'MEM' else gdal.Warp(storPath + '.tif', grib_path, options=warp_options)
-
-    if warped_ds:
-
-        bandCount = warped_ds.RasterCount
-
-        for i in range(bandCount):
-
-            band = warped_ds.GetRasterBand(i+1)
-            bandname = datetime.fromtimestamp(int(band.GetMetadata()['GRIB_VALID_TIME']), tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-
-            out_ds = gdal.GetDriverByName('GTiff').Create(storPath + f'_{i+1}.tif',
-                                                          warped_ds.RasterXSize,
-                                                          warped_ds.RasterYSize,
-                                                          1, gdal.GDT_Float32)
-            out_ds.SetGeoTransform(warped_ds.GetGeoTransform())
-            out_ds.SetProjection(warped_ds.GetProjection())
-            out_ds.GetRasterBand(1).WriteArray(band.ReadAsArray())
-            out_ds.GetRasterBand(1).SetNoDataValue(nodat)
-            out_ds.GetRasterBand(1).SetDescription(bandname)
-            del out_ds
             
 
 def mask_raster(path_to_source, path_to_mask, outPath, noData=False):
@@ -636,20 +556,34 @@ def sortListwithOtherlist(list1, list2):
     sortlist1, sortlist2 = zip(*sorted(zip(list1, list2)))
     return list(sortlist1), list(sortlist2)
 
-def getBluGrnRedBnrFORCEList(filelist):
-    '''Takes a list of paths to an exploded FORCE output and returns a list with ordered paths
-    First all blue then green, red and bnir bands. Furthermore, paths are chronologically sorted (1,2,3,4..months)'''
-    blu = [file for file in filelist if file.split('SEN2H_')[-1].split('_')[0] == 'BLU']
-    grn = [file for file in filelist if file.split('SEN2H_')[-1].split('_')[0] == 'GRN']
-    red = [file for file in filelist if file.split('SEN2H_')[-1].split('_')[0] == 'RED']
-    bnr = [file for file in filelist if file.split('SEN2H_')[-1].split('_')[0] == 'BNR']
+# def getBluGrnRedBnrFORCEList(filelist):
+#     '''Takes a list of paths to an exploded FORCE output and returns a list with ordered paths
+#     First all blue then green, red and bnir bands. Furthermore, paths are chronologically sorted (1,2,3,4..months)'''
+#     blu = [file for file in filelist if file.split('SEN2H_')[-1].split('_')[0] == 'BLU']
+#     grn = [file for file in filelist if file.split('SEN2H_')[-1].split('_')[0] == 'GRN']
+#     red = [file for file in filelist if file.split('SEN2H_')[-1].split('_')[0] == 'RED']
+#     bnr = [file for file in filelist if file.split('SEN2H_')[-1].split('_')[0] == 'BNR']
 
-    blu = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in blu], blu)[-1]
-    grn = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in grn], grn)[-1]
-    red = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in red], red)[-1]
-    bnr = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in bnr], bnr)[-1]
+#     blu = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in blu], blu)[-1]
+#     grn = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in grn], grn)[-1]
+#     red = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in red], red)[-1]
+#     bnr = sortListwithOtherlist([int(t.split('-')[-1].split('.')[0]) for t in bnr], bnr)[-1]
 
-    return sum([blu, grn, red, bnr], [])
+#     return sum([blu, grn, red, bnr], [])
+
+def getCOLORSinOrderFORCELIST(filelist, colorlist):
+    """Takes a list of paths to exploded FORCE files, that contain a 3 lettered word, e.g. BLU, GRN, and returns a list of chronological ordered paths (per color)
+    e.g. blu1,blu2,blu3,grn1,grn2,grn2
+
+    Args:
+        filelist (list): list of strings paths to FORCE files (exploded)
+        colorlist (list): list of colors found in FORCE output, e.g. BLU, GRN, BNR
+    """
+    conti = []
+    for color in colorlist:
+        pattern = fr'_{color.upper()}_' 
+        conti.append([file for file in filelist if re.search(pattern, file)])
+    return list(chain.from_iterable(conti))
 
 def getFORCExyRange(tiles):
     '''take a list of subsetted FORCE Tile names in the Form of X0069_Y0042 and returns a string to be used as filename 
@@ -681,6 +615,21 @@ def vrtPyramids(vrtpath):
     gdal.SetConfigOption('COMPRESS_OVERVIEW', 'DEFLATE')
     Image.BuildOverviews("NEAREST", [2,4,8,16,32,64])
     del Image
+
+def reduce_forceTSA_output_to_validmonths(path_to_forceoutput, start_month_int, end_month_int):
+    '''path_to_forceoutput: path of stored force output (quite likely you want the folder in which all tile folders are)
+    start_month_int & end_month_int: e.g. 3 for march and 8 for August
+    Please note: The filter will look for the YYYYMMDD characters that come right before .tif
+    '''
+    # get rid of force output that is not needed -> months outside of growing season that do not exist in AI4Boundaries
+    files = getFilelist(path_to_forceoutput, '.tif', deep=True)
+
+    filesToKill = [f for f in files if int(f.split('-')[-1].split('.')[0]) not in [i for i in range(start_month_int, end_month_int + 1, 1)]]
+
+    for file in filesToKill:
+        RasterKiller(file)
+
+    return list(filter(lambda item: item not in filesToKill, files))
 
 def reduce_forceTSI_output_to_validmonths(path_to_forceoutput, start_month_int, end_month_int):
     '''path_to_forceoutput: path of stored force output (quite likely you want the folder in which all tile folders are)
@@ -745,7 +694,6 @@ def createFORCEtileLIST(xlist, ylist):
         ylist (list of integer): each y tile coordinate will be paired with the x tile coordinate at the same index at xlist
         e.g. xlist[0] = 10 and ylist[0] = 20 --> 'X0010_Y0020'
     """
-
     return [f'X{x:04d}_Y{y:04d}' for x, y in zip(xlist, ylist)]
 
 def get_forcetiles_range(list_of_forcefiles):
@@ -761,7 +709,7 @@ def force_order_BGRBNR(list_of_forcefiles):
     tilefilesL = []
     for tile in tiles:
         tilefiles = [file for file in list_of_forcefiles if tile in file]
-        tilefilesL.append(getBluGrnRedBnrFORCEList(tilefiles))
+        tilefilesL.append(getCOLORSinOrderFORCELIST(tilefiles))
     
     return tilefilesL
 
@@ -826,12 +774,13 @@ def loadVRTintoNumpyAI4(vrtPath):
 ##################################################################################### 
 
 ########### sub-functions
-def export_intermediate_products(row_col_start, intermediate_aray, dummy_gt, dummy_proj, folder_out, filename, noData=None, typ='int'):
+def export_intermediate_products(row_col_start, intermediate_aray, dummy_gt, dummy_proj, folder_out, filename, noData=None, typ='int', comp=False):
     '''
     intermediate_aray: array to be exported
     dummy_gt + dummy_proj: GetGeotransform() and GetProjection from a gdal.Open object that contains desired geoinformation
     folder_out: path to FOLDER, where intermediate product will be stored
     noData = a no data value can be assigned to the exported tif
+    comp (bool): If True, tiff uses options=['COMPRESS=DEFLATE', 'TILED=YES']
     '''
     if not folder_out.endswith('/'):
         folder_out = folder_out + '/'
@@ -842,8 +791,13 @@ def export_intermediate_products(row_col_start, intermediate_aray, dummy_gt, dum
     typi = gdal.GDT_Int32
     if typ == 'float':
         typi = gdal.GDT_Float32
-    out_ds = gdal.GetDriverByName('GTiff').Create(f'{folder_out}{filename}', 
-                                                intermediate_aray.shape[1], intermediate_aray.shape[0], 1, typi)
+    if comp:
+        out_ds = gdal.GetDriverByName('GTiff').Create(f'{folder_out}{filename}', 
+                                                    intermediate_aray.shape[1], intermediate_aray.shape[0], 1, typi,
+                                                    options=['COMPRESS=DEFLATE', 'TILED=YES'])
+    else:    
+        out_ds = gdal.GetDriverByName('GTiff').Create(f'{folder_out}{filename}', 
+                                                    intermediate_aray.shape[1], intermediate_aray.shape[0], 1, typi)
     # change the Geotransform for each chip
     geotf = list(dummy_gt)
     # get column and rows from filenames
@@ -1388,7 +1342,29 @@ def get_UTM_zone_and_corners_from_xml(nc_file_path, xml_file_path_list):
 
     return [utm, ul_x, ul_y, lr_x, lr_y]
 
-def stack_tifs(input_tif_list, output_tif):
+def stackReader(path_to_stack, bands=False):
+    """Reads-in a raster stacks and returns a 3D numpy array of that array.
+    Optionally, a list with band names will be returned
+
+    Args:
+        path_to_stack (str): path to the stack.tif
+        bands (bool): If True, a list with band names of stack wil be returned as well. WORKS ONLY IF BAND NAMES ARE grepable by GetDescription()
+    """
+    conti = []
+    ds = gdal.Open(path_to_stack, 0)
+    if bands:
+        bandsL = []
+        for b in range(ds.RasterCount):
+            conti.append(ds.GetRasterBand(b+1).ReadAsArray())
+            bandsL.append(ds.GetRasterBand(b+1).GetDescription())
+        return np.dstack(conti), bandsL
+    else:
+        for b in range(ds.RasterCount):
+            conti.append(ds.GetRasterBand(b+1).ReadAsArray())
+        return np.dstack(conti)
+
+
+def stack_tifs(input_tif_list, output_tif=False):
     # Open the first raster to get geotransform, projection, and shape
     src0 = gdal.Open(input_tif_list[0])
     x_size = src0.RasterXSize
@@ -1399,8 +1375,10 @@ def stack_tifs(input_tif_list, output_tif):
     num_bands = len(input_tif_list)
 
     # Create output multi-band raster
-    driver = gdal.GetDriverByName('GTiff')
-    out_ds = driver.Create(output_tif, x_size, y_size, num_bands, dtype)
+    if output_tif:
+        out_ds = gdal.GetDriverByName('GTiff').Create(output_tif, x_size, y_size, num_bands, dtype)
+    else:
+        out_ds = gdal.GetDriverByName('MEM').Create('', x_size, y_size, num_bands, dtype)
     out_ds.SetProjection(proj)
     out_ds.SetGeoTransform(geotrans)
 
@@ -1410,5 +1388,29 @@ def stack_tifs(input_tif_list, output_tif):
         band_data = src.GetRasterBand(1).ReadAsArray()
         out_ds.GetRasterBand(i + 1).WriteArray(band_data)
 
+    if output_tif:
+        out_ds.FlushCache()
+        out_ds = None  # Close file 
+    else:
+        return out_ds
+
+def npTOdisk(arr, reference_path, outPath):
+    """exports a numpy array to a tif that is stored on disk
+
+    Args:
+        arr (numpy array): the array to be exported
+        reference_path (str): path to the reference tif. The extent and dimensions must fit!!!!
+        outPath (_str): path to exported tif on disk
+    """
+    ref_ds = gdal.Open(reference_path)
+    ref_band = ref_ds.GetRasterBand(1)
+    bands = ref_ds.RasterCount
+    out_ds = gdal.GetDriverByName('GTiff').Create(outPath, ref_ds.RasterXSize, ref_ds.RasterYSize, bands, ref_band.DataType)
+    out_ds.SetGeoTransform(ref_ds.GetGeoTransform())
+    out_ds.SetProjection(ref_ds.GetProjection())
+    if bands == 1:
+        out_ds.GetRasterBand(1).WriteArray(arr)
+    else:
+        for i in range(bands):
+            out_ds.GetRasterBand(i+1).WriteArray(arr[:,:,i])
     out_ds.FlushCache()
-    out_ds = None  # Close file 
