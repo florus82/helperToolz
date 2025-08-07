@@ -571,21 +571,25 @@ def sortListwithOtherlist(list1, list2):
 
 #     return sum([blu, grn, red, bnr], [])
 
-def getCOLORSinOrderFORCELIST(filelist, colorlist):
+def getCOLORSinOrderFORCELIST(filelist, colorlist, single=False):
     """Takes a list of paths to exploded FORCE files, that contain a 3 lettered word, e.g. BLU, GRN, and returns a list of chronological ordered paths (per color)
     e.g. blu1,blu2,blu3,grn1,grn2,grn2
 
     Args:
         filelist (list): list of strings paths to FORCE files (exploded)
         colorlist (list): list of colors found in FORCE output, e.g. BLU, GRN, BNR
+        single (bool): if True, a nested list with single color lists will be returned instead of ordered single list
     """
     conti = []
     for color in colorlist:
         pattern = fr'_{color.upper()}_' 
         conti.append([file for file in filelist if re.search(pattern, file)])
-    return list(chain.from_iterable(conti))
+    if single:
+        return list(chain.from_iterable(conti))
+    else:
+        return conti
 
-def getFORCExyRange(tiles):
+def getFORCExyRangeName(tiles):
     '''take a list of subsetted FORCE Tile names in the Form of X0069_Y0042 and returns a string to be used as filename 
     that gives X and Y range ,e.g. Force_X_from_68_to_69_Y_from_42_to_42'''
     X = [int(tile.split('_')[0][-2:]) for tile in tiles]
@@ -699,49 +703,66 @@ def createFORCEtileLIST(xlist, ylist):
 def get_forcetiles_range(list_of_forcefiles):
     '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
     creats a string that indicates X and Y extremes from list_of_forcefiles'''
-    tiles = list(set([file.split('output/')[-1].split('/')[2].split('/')[0] for file in list_of_forcefiles]))
-    return getFORCExyRange(tiles)
+    return list(set([re.search(r'X\d{4}_Y\d{4}', tile).group() for tile in list_of_forcefiles]))
 
-def force_order_BGRBNR(list_of_forcefiles):
-    '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
-        will return a list that orders the input list to blue, green, red, ir independently from tiles and dates'''
-    tiles = list(set([file.split('output/')[-1].split('/')[2].split('/')[0] for file in list_of_forcefiles]))
-    tilefilesL = []
-    for tile in tiles:
-        tilefiles = [file for file in list_of_forcefiles if tile in file]
-        tilefilesL.append(getCOLORSinOrderFORCELIST(tilefiles))
+# def force_order_Colors(list_of_forcefiles):
+#     '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
+#         will return a list that orders the input list to blue, green, red, ir independently from tiles and dates'''
+#     tiles = list(set([file.split('output/')[-1].split('/')[2].split('/')[0] for file in list_of_forcefiles]))
+#     tilefilesL = []
+#     for tile in tiles:
+#         tilefiles = [file for file in list_of_forcefiles if tile in file]
+#         tilefilesL.append(getCOLORSinOrderFORCELIST(tilefiles))
     
-    return tilefilesL
+#     return tilefilesL
 
-def force_to_vrt(list_of_forcefiles, ordered_forcetiles, vrt_out_path, pyramids=False):
+def force_to_vrt(list_of_forcefiles, ordered_forcetiles, vrt_out_path, pyramids=False, bandnames=False):
     '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
-        ordered_forcetiles: e.g output from force_order_BGRBNR
+        ordered_forcetiles: e.g output from getCOLORSinOrderFORCELIST (single=False)
         vrt_out_path: path where .vrt files will be created (there will be more than one to account for all the bands)
         pyramids: if set to True, pyramids will be created (might be very very large!!)'''
     
     # tiles = list(set([file.split('output/')[-1].split('/')[1].split('/')[0] for file in list_of_forcefiles]))
-    force_folder_name = get_forcetiles_range(list_of_forcefiles)
+    force_folder_name = getFORCExyRangeName(get_forcetiles_range(list_of_forcefiles))
     if not vrt_out_path.endswith('/'):
         vrt_out_path = vrt_out_path + '/'
     outDir = f'{vrt_out_path}{force_folder_name}/'
     if not os.path.exists(outDir):
         os.makedirs(outDir)
         print(outDir)
-        for i in range(len(ordered_forcetiles[0])):
-            vrt = gdal.BuildVRT(f'{outDir}{force_folder_name}_{str(i)}.vrt', [tilefile[i] for tilefile in ordered_forcetiles], separate = False)
+        vrts = []
+        for i in range(len(ordered_forcetiles)):
+            vrt_name = f'{outDir}{force_folder_name}_{str(i)}.vrt'
+            vrt = gdal.BuildVRT(vrt_name, ordered_forcetiles[i], separate = False)
             vrt = None
-        print('single vrts created')
 
-        # make paths in vrts relative
-        vrts = getFilelist(outDir, '.vrt')
-        for vrt in vrts:
-            convertVRTpathsTOrelative(vrt)
+            # make paths in vrts relative
+            convertVRTpathsTOrelative(vrt_name)
+            vrts.append(vrt_name)
+
+        # set optionally bandnames    
+        if bandnames:
+                for idz, bname in enumerate(bandnames): 
+                    print(f'{outDir}{force_folder_name}_{str(idz)}.vrt')
+                    vrt = gdal.Open(f'{outDir}{force_folder_name}_{str(idz)}.vrt', gdal.GA_Update)  # VRT must be writable
+                    band = vrt.GetRasterBand(1)
+                    band.SetDescription(bname)
+                    vrt = None
+        print('single vrts created')
+        
         nums = [int(vrt.split('_')[-1].split('.')[0]) for vrt in vrts]
         vrts_sorted = sortListwithOtherlist(nums, vrts)[-1]
         print('paths in vrts made relative')
         
         vrt = gdal.BuildVRT(f'{outDir}{force_folder_name}_Cube.vrt', vrts_sorted, separate = True)
         vrt = None
+        if bandnames:
+            # set vrt band names
+            vrt = gdal.Open(f'{outDir}{force_folder_name}_Cube.vrt', gdal.GA_Update)  # VRT must be writable
+            for idz, bname in enumerate(bandnames): 
+                band = vrt.GetRasterBand(1+idz)
+                band.SetDescription(bname)
+            vrt = None
         # convertVRTpathsTOrelative(f'{outDir}{force_folder_name}_Cube.vrt')
         print('overlord vrt created')
         if pyramids:
@@ -1351,7 +1372,10 @@ def stackReader(path_to_stack, bands=False):
         bands (bool): If True, a list with band names of stack wil be returned as well. WORKS ONLY IF BAND NAMES ARE grepable by GetDescription()
     """
     conti = []
-    ds = gdal.Open(path_to_stack, 0)
+    if type(path_to_stack) != osgeo.gdal.Dataset:
+        ds = gdal.Open(path_to_stack)
+    else:
+        ds = path_to_stack
     if bands:
         bandsL = []
         for b in range(ds.RasterCount):
@@ -1366,7 +1390,10 @@ def stackReader(path_to_stack, bands=False):
 
 def stack_tifs(input_tif_list, output_tif=False):
     # Open the first raster to get geotransform, projection, and shape
-    src0 = gdal.Open(input_tif_list[0])
+    if type(input_tif_list) != osgeo.gdal.Dataset:
+        src0 = gdal.Open(input_tif_list[0])
+    else:
+        src0 = input_tif_list
     x_size = src0.RasterXSize
     y_size = src0.RasterYSize
     proj = src0.GetProjection()
