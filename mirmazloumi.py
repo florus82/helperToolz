@@ -1,4 +1,38 @@
 import numpy as np
+from other_repos.pyTSEB.pyTSEB import meteo_utils
+from other_repos.pyTSEB.pyTSEB import resistances
+from other_repos.pyTSEB.pyTSEB import net_radiation
+from other_repos.pyTSEB.pyTSEB import clumping_index 
+from other_repos.pyTSEB.pyTSEB import TSEB
+
+
+def calc_emiss_atm(ea, t_a_k):
+    '''Atmospheric emissivity
+
+    Estimates the effective atmospheric emissivity for clear sky.
+
+    Parameters
+    ----------
+    ea : float
+        atmospheric vapour pressure (mb).
+    t_a_k : float
+        air temperature (Kelvin).
+
+    Returns
+    -------
+    emiss_air : float
+        effective atmospheric emissivity.
+
+    References
+    ----------
+    .. [Brutsaert1975] Brutsaert, W. (1975) On a derivable formula for long-wave radiation
+        from clear skies, Water Resour. Res., 11(5), 742-744,
+        htpp://dx.doi.org/10.1029/WR011i005p00742.'''
+
+    emiss_air = 1.24 * (ea / t_a_k)**(1. / 7.)  # Eq. 11 in [Brutsaert1975]_
+
+    return np.asarray(emiss_air)
+
 
 # calculate windspeed and downscale
 def calc_wind_speed(u, v):
@@ -57,11 +91,11 @@ def calc_longwave_irradiance(ea, t_a_k, p, z_T, h_C):
         L_dn : float
                 Longwave atmospheric irradiance (W m-2) above the canopy
         '''
-
-        lapse_rate = TSEB.met.calc_lapse_rate_moist(t_a_k, ea, p)
+        meteo_utils.calc_stephan_boltzmann
+        lapse_rate = meteo_utils.calc_lapse_rate_moist(t_a_k, ea, p)
         t_a_surface = t_a_k - lapse_rate * (h_C - z_T)
         emisAtm = calc_emiss_atm(ea, t_a_surface)
-        L_dn = emisAtm * TSEB.met.calc_stephan_boltzmann(t_a_surface)
+        L_dn = emisAtm * meteo_utils.calc_stephan_boltzmann(t_a_surface)
         return np.asarray(L_dn)
 
 def calc_fg_gutman(ndvi, ndvi_min, ndvi_max):

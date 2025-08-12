@@ -430,7 +430,7 @@ def get_pixel_size_in_target_crs(source_path, reference_path):
     y_res = geotrans[5]
     return x_res, - y_res
 
-def warp_raster_to_reference(source_path, reference_path, output_path, resampling='bilinear', keepRes=False):
+def warp_raster_to_reference(source_path, reference_path, output_path, resampling='bilinear', keepRes=False, dtype=None):
     '''
     source_path: the raster to be warped
     reference_path: the raster to which will be warped
@@ -438,10 +438,11 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
     resampling: method to do resampling, e.g. bilinear, cubic, nearest
     keepRes: if set to true the warp will be done without changing the resolution of the raster at source_path to that of reference_path; if set to an integer,
     the pixel size of reference_path will be divided by that integer to gain a new pixel size 
+    dtype (gdal.GDT_): if None, the dtype from source_path will be used
     '''
 
     # Open reference raster
-    ref_ds = gdal.Open(reference_path)
+    ref_ds = checkPath(reference_path)
     ref_proj = ref_ds.GetProjection()
     ref_gt = ref_ds.GetGeoTransform()
     x_size = ref_ds.RasterXSize
@@ -457,14 +458,40 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
     xmax = xmin + ref_x_res * x_size
     ymin = ymax - ref_y_res * y_size
 
-    # create a temp tif for clipping --> the warp will likely result in an extra column, which will be taken care of by gdal.Translate
-    temp_path = output_path.split('.tif')[0] + 'temp.tif'
+    # If dtype not given, use dtype from source raster
+    if dtype is None:
+        src_ds = checkPath(source_path)
+        dtype = src_ds.GetRasterBand(1).DataType  # matches gdal.GDT_* constants
+        src_ds = None  # close
 
-    if isinstance(keepRes, int) and keepRes > 0:
+    if isinstance(keepRes, bool) and keepRes:
+        src_ds = checkPath(source_path)
+        src_gt = src_ds.GetGeoTransform()
+        src_proj = osr.SpatialReference(wkt=src_ds.GetProjection())
+
+        ref_proj = osr.SpatialReference(wkt=ref_ds.GetProjection())
+
+        transform = osr.CoordinateTransformation(src_proj, ref_proj)
+
+        # Pixel corners in source CRS
+        px_width = src_gt[1]
+        px_height = src_gt[5]  # usually negative
+
+        # Point (0,0)
+        x0, y0, _ = transform.TransformPoint(src_gt[0], src_gt[3])
+        # Point (1 pixel right)
+        x1, y1, _ = transform.TransformPoint(src_gt[0] + px_width, src_gt[3])
+        # Point (1 pixel down)
+        x2, y2, _ = transform.TransformPoint(src_gt[0], src_gt[3] + px_height)
+
+        # Resolution in target CRS
+        aim_x_res = ((x1 - x0)**2 + (y1 - y0)**2) ** 0.5
+        aim_y_res = ((x2 - x0)**2 + (y2 - y0)**2) ** 0.5
+
+    elif isinstance(keepRes, int) and not isinstance(keepRes, bool) and keepRes > 0:
         aim_x_res = ref_x_res / keepRes
         aim_y_res = ref_y_res / keepRes
-    elif isinstance(keepRes, bool) and keepRes > 0:
-        aim_x_res, aim_y_res = get_pixel_size_in_target_crs(source_path, reference_path)
+
     else:
         aim_x_res = ref_x_res
         aim_y_res = ref_y_res
@@ -478,7 +505,8 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
         xRes=aim_x_res,
         yRes=aim_y_res,
         resampleAlg=resampling,
-        targetAlignedPixels=False
+        targetAlignedPixels=False,
+        outputType=dtype
     )
 
     # Perform reprojection and resampling
@@ -1441,3 +1469,9 @@ def npTOdisk(arr, reference_path, outPath):
         for i in range(bands):
             out_ds.GetRasterBand(i+1).WriteArray(arr[:,:,i])
     out_ds.FlushCache()
+
+def checkPath(path):
+    if isinstance(path, str):
+            return gdal.Open(path)
+    else:
+        return path
