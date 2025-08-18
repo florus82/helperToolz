@@ -10,6 +10,8 @@ from osgeo import ogr, osr
 import xml.etree.ElementTree as ET
 import re
 from itertools import chain
+import hashlib
+from datetime import datetime, timezone
 #from skimage import measure
 
 
@@ -1391,13 +1393,14 @@ def get_UTM_zone_and_corners_from_xml(nc_file_path, xml_file_path_list):
 
     return [utm, ul_x, ul_y, lr_x, lr_y]
 
-def stackReader(path_to_stack, bands=False):
+def stackReader(path_to_stack, bands=False, era=False):
     """Reads-in a raster stacks and returns a 3D numpy array of that array.
     Optionally, a list with band names will be returned
 
     Args:
         path_to_stack (str): path to the stack.tif
         bands (bool): If True, a list with band names of stack wil be returned as well. WORKS ONLY IF BAND NAMES ARE grepable by GetDescription()
+        era (bool): If bands True and era True, the bands metadata is extracted in a different manner
     """
     conti = []
     if type(path_to_stack) != osgeo.gdal.Dataset:
@@ -1408,8 +1411,13 @@ def stackReader(path_to_stack, bands=False):
         bandsL = []
         for b in range(ds.RasterCount):
             conti.append(ds.GetRasterBand(b+1).ReadAsArray())
-            bandsL.append(ds.GetRasterBand(b+1).GetDescription())
+            if not era:
+                bandsL.append(ds.GetRasterBand(b+1).GetDescription())
+            else:
+                bandsL.append(datetime.fromtimestamp(int(ds.GetRasterBand(b+1).GetMetadata()['GRIB_VALID_TIME']), tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S'))
         return np.dstack(conti), bandsL
+    
+    
     else:
         for b in range(ds.RasterCount):
             conti.append(ds.GetRasterBand(b+1).ReadAsArray())
@@ -1449,7 +1457,7 @@ def stack_tifs(input_tif_list, output_tif=False):
     else:
         return out_ds
 
-def npTOdisk(arr, reference_path, outPath):
+def npTOdisk(arr, reference_path, outPath, bands = False):
     """exports a numpy array to a tif that is stored on disk
 
     Args:
@@ -1457,9 +1465,10 @@ def npTOdisk(arr, reference_path, outPath):
         reference_path (str): path to the reference tif. The extent and dimensions must fit!!!!
         outPath (_str): path to exported tif on disk
     """
-    ref_ds = gdal.Open(reference_path)
+    ref_ds = checkPath(reference_path)
     ref_band = ref_ds.GetRasterBand(1)
-    bands = ref_ds.RasterCount
+    if not bands:
+        bands = ref_ds.RasterCount
     out_ds = gdal.GetDriverByName('GTiff').Create(outPath, ref_ds.RasterXSize, ref_ds.RasterYSize, bands, ref_band.DataType)
     out_ds.SetGeoTransform(ref_ds.GetGeoTransform())
     out_ds.SetProjection(ref_ds.GetProjection())
@@ -1475,3 +1484,21 @@ def checkPath(path):
             return gdal.Open(path)
     else:
         return path
+    
+def getUniqueIDfromTILESXY(tileXlist, tileYlist):
+    s = ",".join(map(str, tileXlist + tileYlist))
+    return hashlib.sha256(s.encode()).hexdigest()
+
+def maskVRT(vrtPath, maskArray):
+    """Opens a vrt and masks it with a binary array of the same dimensions
+
+    Args:
+        vrtPath (str): path to the vrt
+        maskArray (np.array): binary np array, where 1 == valid and 0 == maks
+    """
+    ds = gdal.Open(vrtPath)
+    b = []
+    for band in range(ds.RasterCount):
+        b.append(ds.GetRasterBand(band + 1).ReadAsArray() * maskArray)
+    masked_arr =  np.dstack(b)
+    makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}.tif", 0, bands=len(b))

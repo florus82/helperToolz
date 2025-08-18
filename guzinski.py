@@ -111,8 +111,7 @@ def temp_pressure_checker(list_of_era5_variables):
         list_of_era5_variables[temp_ind] = cont
         print('2m_temperature and surface pressure swaped and now in right order - continue')
 
-
-    
+ 
 def warp_ERA5_to_reference(grib_path, reference_path, output_path='MEM', bandL='ALL', resampling='bilinear', NoData=False, 
                            sharp_DEM=None, sharp_geopot=None, sharp_rate=None, sharp_blendheight=None, sharp_temp=None,sharpener=None):
     """Warps a ERA .gib file to an existing raster in terms of resolution, projection, extent and aligns to raster.
@@ -506,8 +505,9 @@ def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, 
             if d1 == e5:
                 bands.append(count)
     # load the era5 variable acquisition-wise into 2D numpy array 
+    # load the era5 variable acquisition-wise into 2D numpy array 
     arrL = []
-    for b in bands:
+    for b in bands: 
         # compare the time of LST composite with 
         mask = arr_up == era_time[b]
         # load the band that holds the observation just after LST acquisition
@@ -515,13 +515,14 @@ def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, 
         # load the band that holds the observation just prior to LST acquisition
         before = era_ds.GetRasterBand(b-1).ReadAsArray()
         # calculate the linearly interpolated values at the minute of acquisition
-        vals = before - (before - after) * (np.array(arr_min, dtype=np.float16) / 60)
-        arrL.append(vals * mask)
+        vals_interpolated = before - (before - after) * (np.array(arr_min, dtype=np.float16) / 60) # in J/m²
+        # convert to W/m²
+        vals_watt = vals_interpolated /3600
+        arrL.append(vals_watt * mask)
     block = np.dstack(arrL)
 
     block[block == 0] = np.nan
-    ssrd = np.nanmax(block, axis = 2)
-    ssrd_watt = ssrd / 3600
+    ssrd_watt = np.nanmax(block, axis = 2)
 
     # make a mask of the nan values, as the output of pvlib.irradiance.get_total_irradiance does skip them which hinders rebuild to 2D
     valid_mask = np.isfinite(ssrd_watt)
@@ -595,7 +596,7 @@ def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, 
     azimuth_arr = np.full(slope.shape, np.nan)
     azimuth_arr[valid_mask] = solpos['azimuth'].to_numpy()
 
-    return poa_global_arr, zenith_arr, azimuth_arr
+    return poa_global_arr, zenith_arr, azimuth_arr, ssrd_watt # *3600 to bring back to J/m²
     
 
 

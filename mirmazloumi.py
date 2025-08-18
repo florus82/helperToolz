@@ -36,9 +36,10 @@ def calc_emiss_atm(ea, t_a_k):
 
 # calculate windspeed and downscale
 def calc_wind_speed(u, v):
-    ws = (u ** 2 + v ** 2) ** 0.5
+    ws = np.hypot(u, v)
     ws = np.maximum(ws, 1.0)
     return ws
+
 # estimate canopy height from estimated LAI
 def hc_from_lai(lai, hc_max, lai_max, hc_min=0):
     """

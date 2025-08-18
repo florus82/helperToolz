@@ -13,6 +13,8 @@ INT_TO_MONTH = {
     '12': 'December'
     }
 
+MONTH_TO_02D = {v: k for k, v in INT_TO_MONTH.items()}
+
 DAYCOUNT_LEAP = [31,29,31,30,31,30,31,31,30,31,30,31]
 DAYCOUNT_NOLEAP = [31,28,31,30,31,30,31,31,30,31,30,31]
 
