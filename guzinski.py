@@ -599,7 +599,6 @@ def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, 
     return poa_global_arr, zenith_arr, azimuth_arr, ssrd_watt # *3600 to bring back to J/m²
     
 
-
 def applyAdiabaticDEMsharpener(era5_temp, dem, geopot, rate, bheight):
     """takes a era5 value at blending height and converts to surface temperature using a dem and a lapse rate
     follows the formula from Mohammad

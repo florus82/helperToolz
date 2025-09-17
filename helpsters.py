@@ -772,12 +772,12 @@ def force_to_vrt(list_of_forcefiles, ordered_forcetiles, vrt_out_path, pyramids=
 
         # set optionally bandnames    
         if bandnames:
-                for idz, bname in enumerate(bandnames): 
-                    print(f'{outDir}{force_folder_name}_{str(idz)}.vrt')
-                    vrt = gdal.Open(f'{outDir}{force_folder_name}_{str(idz)}.vrt', gdal.GA_Update)  # VRT must be writable
-                    band = vrt.GetRasterBand(1)
-                    band.SetDescription(bname)
-                    vrt = None
+            for idz, bname in enumerate(bandnames): 
+                print(f'{outDir}{force_folder_name}_{str(idz)}.vrt')
+                vrt = gdal.Open(f'{outDir}{force_folder_name}_{str(idz)}.vrt', gdal.GA_Update)  # VRT must be writable
+                band = vrt.GetRasterBand(1)
+                band.SetDescription(bname)
+                vrt = None
         print('single vrts created')
         
         nums = [int(vrt.split('_')[-1].split('.')[0]) for vrt in vrts]
@@ -1502,3 +1502,53 @@ def maskVRT(vrtPath, maskArray):
         b.append(ds.GetRasterBand(band + 1).ReadAsArray() * maskArray)
     masked_arr =  np.dstack(b)
     makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}.tif", 0, bands=len(b))
+
+def maskVRT(vrtPath, maskArray):
+    """Opens a vrt and masks it with a binary array of the same dimensions
+
+    Args:
+        vrtPath (str): path to the vrt
+        maskArray (np.array): binary np array, where 1 == valid and 0 == maks
+    """
+    ds = gdal.Open(vrtPath)
+    b = []
+    for band in range(ds.RasterCount):
+        b.append(ds.GetRasterBand(band + 1).ReadAsArray() * maskArray)
+    masked_arr =  np.dstack(b)
+    makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_S2_agromask.tif", bands=len(b))
+
+
+def maskVRT_water(vrtPath):
+    """Opens a vrt and applies dirty water mask --> slope = NA and aspect = 180
+
+    Args:
+        vrtPath (str): path to the vrt
+        maskArray (np.array): binary np array, where 1 == valid and 0 == maks
+    """
+    ds = gdal.Open(vrtPath)
+    b = []
+    for band in range(ds.RasterCount):
+        b.append(ds.GetRasterBand(band + 1).ReadAsArray())
+    arr =  np.dstack(b)
+    mask = np.logical_and(arr[:,:,9] < 0.000000001, arr[:,:,10] == 180)
+    masked_arr = np.where(mask[:,:,None],np.nan, arr)
+    makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_watermask.tif", gdalType=gdal.GDT_Float32, bands=len(b))
+
+
+def maskVRT_water_and_drop_aux(vrtPath):
+    """Opens a vrt and applies dirty water mask --> slope = NA and aspect = 180
+    after masking, slope, aspect, incidence will be dropped
+
+    Args:
+        vrtPath (str): path to the vrt
+        maskArray (np.array): binary np array, where 1 == valid and 0 == maks
+    """
+    ds = gdal.Open(vrtPath)
+    b = []
+    for band in range(ds.RasterCount):
+        b.append(ds.GetRasterBand(band + 1).ReadAsArray())
+    arr =  np.dstack(b)
+    mask = np.logical_and(arr[:,:,9] < 0.000000001, arr[:,:,10] == 180)
+    masked_arr = np.where(mask[:,:,None],np.nan, arr)
+    masked_arr = masked_arr[:,:,0:9]
+    makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_watermask.tif", gdalType=gdal.GDT_Float32, bands=9)

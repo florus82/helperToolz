@@ -13,6 +13,21 @@ INT_TO_MONTH = {
     '12': 'December'
     }
 
+REAL_INT_TO_MONTH = {
+    1: 'January',
+    2: 'February',
+    3: 'March',
+    4: 'April',
+    5: 'May',
+    6: 'June',
+    7: 'July',
+    8: 'August',
+    9: 'September',
+    10: 'October',
+    11: 'November',
+    12: 'December'
+    }
+
 MONTH_TO_02D = {v: k for k, v in INT_TO_MONTH.items()}
 
 DAYCOUNT_LEAP = [31,29,31,30,31,30,31,31,30,31,30,31]
@@ -25,3 +40,5 @@ MOIST_ADIABAT = 0.002 # K/m
 GRAVITY = 9.80665 # m/s**2
 MOLAR_MASS_AIR = 0.0289644 # kg/mol
 UNIVERSAL_GAS = 8.3144598 # J/(mol*K)
+
+SOLAR_CONST = 1367.0 # Solar constant (W/m^2)
