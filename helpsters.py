@@ -579,12 +579,21 @@ def getValsatMaxIndex(arr1, arr2):
 #####################################################################################
 ##################################################################################### 
 
-def sortListwithOtherlist(list1, list2):
+def sortListwithOtherlist(list1, list2, rev=False):
     ''' list1: unsorted list
         list2: unsorted list with same length as list1
-        Sorts list2 based on sorted(list1). Returns sorted list1 list2'''
+        Sorts list2 based on sorted(list1). Returns sorted list1 list2
+        if rev == True, list will be returned reversed
+        '''
     sortlist1, sortlist2 = zip(*sorted(zip(list1, list2)))
-    return list(sortlist1), list(sortlist2)
+    sort1 = list(sortlist1)
+    sort2 = list(sortlist2)
+
+    if rev:
+        sort1.reverse()
+        sort2.reverse()
+  
+    return sort1, sort2
 
 # def getBluGrnRedBnrFORCEList(filelist):
 #     '''Takes a list of paths to an exploded FORCE output and returns a list with ordered paths

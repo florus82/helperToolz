@@ -322,10 +322,8 @@ def get_warped_ERA5_at_doy(path_to_era_grib, reference_path, lst_acq_file, doy, 
     era_time = [pd.Timestamp(era_ds.GetRasterBand(i+1).GetDescription()) for i in range(bandNumber)]
 
     # open and load the acquisition raster from LST
-    if isinstance(lst_acq_file, str):
-        LST_acq_ds = gdal.Open(lst_acq_file)
-    else:
-        LST_acq_ds = lst_acq_file
+    LST_acq_ds = checkPath(lst_acq_file)
+    
     # her should be a loop if we go for more than one day
     arr = LST_acq_ds.GetRasterBand(doy).ReadAsArray()
     arr = arr.astype(np.int64)
