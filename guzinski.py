@@ -286,7 +286,7 @@ def warp_ERA5_to_reference(grib_path, reference_path, output_path='MEM', bandL='
 
 
 def get_warped_ERA5_at_doy(path_to_era_grib, reference_path, lst_acq_file, doy, resampling='bilinear', outPath='MEM', bandL='ALL',
-                           sharp_blendheight=False, sharp_DEM=False, sharp_geopot=False, sharp_rate=False, sharp_temp=False, sharpener=False):
+                           sharp_blendheight=False, sharp_DEM=False, sharp_geopot=False, sharp_rate=False, sharp_temp=False, sharpener=False, nodat=None):
     """will get the era5 value (interpolated between 2 neighbouring values) at the time of LST acquisition per pixel for one LST composite (1 day)
     Returns a 2D numpy array
     Args:
@@ -310,12 +310,14 @@ def get_warped_ERA5_at_doy(path_to_era_grib, reference_path, lst_acq_file, doy, 
         era_ds = warp_ERA5_to_reference(grib_path=path_to_era_grib, reference_path=reference_path, resampling=resampling,
                                         output_path=outPath, bandL=bandL,
                                         sharp_blendheight=sharp_blendheight, sharp_DEM=sharp_DEM,
-                                        sharp_geopot=sharp_geopot, sharp_rate=sharp_rate, sharp_temp=sharp_temp, sharpener=sharpener)
+                                        sharp_geopot=sharp_geopot, sharp_rate=sharp_rate, sharp_temp=sharp_temp, sharpener=sharpener,
+                                        NoData = nodat)
     else:
         warp_ERA5_to_reference(grib_path=path_to_era_grib, reference_path=reference_path, resampling=resampling,
                                output_path=outPath, bandL=bandL,
                                sharp_blendheight=sharp_blendheight, sharp_DEM=sharp_DEM,
-                               sharp_geopot=sharp_geopot, sharp_rate=sharp_rate, sharp_temp=sharp_temp, sharpener=sharpener)
+                               sharp_geopot=sharp_geopot, sharp_rate=sharp_rate, sharp_temp=sharp_temp, sharpener=sharpener,
+                               NoData = nodat)
         era_ds = gdal.Open(outPath)
     
     bandNumber = era_ds.RasterCount
@@ -451,7 +453,7 @@ def warp_np_to_reference(arr, arr_tif_path, target_tif_path, noData=np.nan, resa
 
 
 def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, lst_acq_file, doy, slope_path,
-                                           aspect_path, dem_path, lat_path, lon_path, outPath='MEM', bandL='ALL'):
+                                           aspect_path, dem_path, lat_path, lon_path, outPath='MEM', bandL='ALL', nodat =None):
     """will get the surface_solar_radiation_downward_clear_sky value (interpolated between 2 neighbouring values) at the time of LST acquisition
     per pixel for one LST composite (1 day). Furthermore, terrain correction and clear sky correction is done
     
@@ -477,9 +479,9 @@ def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, 
         azimuth_arr --> solar azimuth at LST acquisition times
     """
     if outPath == 'MEM':
-        era_ds = warp_ERA5_to_reference(grib_path=path_to_ssrdsc_grib, reference_path=reference_path, output_path=outPath)
+        era_ds = warp_ERA5_to_reference(grib_path=path_to_ssrdsc_grib, reference_path=reference_path, output_path=outPath, NoData=nodat)
     else:
-        warp_ERA5_to_reference(grib_path=path_to_ssrdsc_grib, reference_path=reference_path, output_path=outPath)
+        warp_ERA5_to_reference(grib_path=path_to_ssrdsc_grib, reference_path=reference_path, output_path=outPath, NoData=nodat)
         era_ds = gdal.Open(outPath)
 
     bandNumber = era_ds.RasterCount

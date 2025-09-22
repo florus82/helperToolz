@@ -509,7 +509,10 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
         resampleAlg=resampling,
         targetAlignedPixels=False,
         outputType=dtype
+        # srcNodata=noDat,     
+        # dstNodata=-999
     )
+
 
     # Perform reprojection and resampling
     warped_ds = gdal.Warp('', source_path, options=warp_options) if out_format == 'MEM' else gdal.Warp(output_path, source_path, options=warp_options)
