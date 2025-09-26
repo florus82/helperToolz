@@ -6,8 +6,10 @@ from datetime import datetime, timezone
 import re
 import pandas as pd
 import pvlib
+from pvlib import solarposition
 from pvlib.irradiance import get_total_irradiance
 from pvlib.location import Location
+from scipy.interpolate import NearestNDInterpolator
 
 
 
@@ -658,3 +660,96 @@ def find_grib_file(grib_path_list, lst_acquisition_file):
             matchpathL.append(yfile)
     return matchpathL
 
+
+def interpol_Time(arr):
+    """ takes an array with time in unix seconds and interpolates via nearest neighbour
+
+    Args:
+        arr (np int 64): array with unix seconds and gaps filled with 0
+    """
+    # Coordinates of all indices
+    x, y = np.indices(arr.shape)
+
+    # Mask valid points
+    valid_mask = (~np.isnan(arr)) & (arr > 0)
+
+    # Build nearest-neighbor interpolator
+    interp = NearestNDInterpolator(list(zip(x[valid_mask], y[valid_mask])), arr[valid_mask])
+
+    # Copy the original array
+    filled = arr.copy()
+
+    # Find missing points (NaN or 0)
+    missing_mask = np.isnan(arr) | (arr <= 0)
+
+    # Interpolate only those missing points
+    filled[missing_mask] = interp(x[missing_mask], y[missing_mask])
+
+    # Cast back to int 
+    filled = filled.astype(np.int64)
+
+    return filled
+
+
+def compute_incidence_angle(time_warp, lat, lon, dem, slope_rad, aspect_rad):
+    # flatten
+    time_flat = time_warp.ravel()
+    lat_flat = lat.ravel()
+    lon_flat = lon.ravel()
+    dem_flat = dem.ravel()
+    shape = time_warp.shape
+
+    # convert to tz-aware datetimes (assume unix seconds UTC)
+    times = pd.to_datetime(time_flat, unit='s', utc=True)
+
+    # handle nodata times (e.g. <= 0) -> mask them
+    valid_time_mask = ~np.isnan(time_flat) & (time_flat > 0)
+
+    incidence_flat = np.full(time_flat.shape, np.nan, dtype=np.float32)
+
+    if not np.any(valid_time_mask):
+        return incidence_flat.reshape(shape)
+
+    # speed: compute solar position grouped by unique timestamps that actually occur
+    unique_times, inverse_idx = np.unique(times[valid_time_mask], return_inverse=True)
+    # For each unique time, compute solar position for all valid pixels with that time.
+    # Note: pvlib accepts vectorized latitude/longitude arrays of same length as lat/lon slice.
+    # We'll iterate unique times (usually few) — cheaper than computing per-pixel if timestamps repeat.
+    valid_indices = np.nonzero(valid_time_mask)[0]  # indices in flattened arrays
+
+    for ut_i, ut in enumerate(unique_times):
+        # indices (in flattened arrays) that correspond to this unique time
+        sel = valid_indices[inverse_idx == ut_i]
+        if sel.size == 0:
+            continue
+
+        sel_lat = lat_flat[sel]
+        sel_lon = lon_flat[sel]
+        sel_dem = dem_flat[sel]
+
+        # compute solar position for these points at single time (pvlib will vectorize lat/lon)
+
+        times_ut = pd.DatetimeIndex([ut] * len(sel_lat))
+        sp = solarposition.get_solarposition(time=times_ut, latitude=sel_lat, longitude=sel_lon, altitude=sel_dem)
+
+        zen = np.deg2rad(sp['zenith'].values)   # array shaped like sel
+        az  = np.deg2rad(sp['azimuth'].values)
+
+        # slope/aspect for these pixels
+        s = slope_rad.ravel()[sel]
+        asp = aspect_rad.ravel()[sel]
+
+        # compute cos theta_i
+        cos_theta = (np.cos(zen) * np.cos(s) +
+                     np.sin(zen) * np.sin(s) * np.cos(az - asp))
+
+        # clip numeric roundoff
+        cos_theta = np.clip(cos_theta, -1.0, 1.0)
+
+        # compute incidence angle (deg)
+        with np.errstate(invalid='ignore'):
+            incidence_deg = np.rad2deg(np.arccos(cos_theta))
+
+        incidence_flat[sel] = incidence_deg
+
+    return incidence_flat.reshape(shape)

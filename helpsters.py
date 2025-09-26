@@ -533,7 +533,6 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
 
 
             
-
 def mask_raster(path_to_source, path_to_mask, outPath, noData=False):
     '''
     path_to_source: the raster that will be masked
@@ -1435,7 +1434,6 @@ def stackReader(path_to_stack, bands=False, era=False):
             conti.append(ds.GetRasterBand(b+1).ReadAsArray())
         return np.dstack(conti)
 
-
 def stack_tifs(input_tif_list, output_tif=False):
     # Open the first raster to get geotransform, projection, and shape
     if type(input_tif_list) != osgeo.gdal.Dataset:
@@ -1469,7 +1467,7 @@ def stack_tifs(input_tif_list, output_tif=False):
     else:
         return out_ds
 
-def npTOdisk(arr, reference_path, outPath, bands = False):
+def npTOdisk(arr, reference_path, outPath, bands = False, bandnames = False, noData = False, d_type = False):
     """exports a numpy array to a tif that is stored on disk
 
     Args:
@@ -1481,14 +1479,25 @@ def npTOdisk(arr, reference_path, outPath, bands = False):
     ref_band = ref_ds.GetRasterBand(1)
     if not bands:
         bands = ref_ds.RasterCount
-    out_ds = gdal.GetDriverByName('GTiff').Create(outPath, ref_ds.RasterXSize, ref_ds.RasterYSize, bands, ref_band.DataType)
+    if not d_type:
+        out_ds = gdal.GetDriverByName('GTiff').Create(outPath, ref_ds.RasterXSize, ref_ds.RasterYSize, bands, ref_band.DataType)
+    else:
+        out_ds = gdal.GetDriverByName('GTiff').Create(outPath, ref_ds.RasterXSize, ref_ds.RasterYSize, bands, d_type)
     out_ds.SetGeoTransform(ref_ds.GetGeoTransform())
     out_ds.SetProjection(ref_ds.GetProjection())
     if bands == 1:
         out_ds.GetRasterBand(1).WriteArray(arr)
+        if bandnames:
+            out_ds.GetRasterBand(1).SetDescription(bandnames)
+        if noData:
+            out_ds.GetRasterBand(1).SetNoDataValue(noData)
     else:
         for i in range(bands):
             out_ds.GetRasterBand(i+1).WriteArray(arr[:,:,i])
+            if bandnames:
+                out_ds.GetRasterBand(i+1).SetDescription(str(bandnames[i]))
+            if noData:
+                out_ds.GetRasterBand(i+1).SetNoDataValue(noData)
     out_ds.FlushCache()
 
 def checkPath(path):
