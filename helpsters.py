@@ -13,6 +13,8 @@ from itertools import chain
 import hashlib
 from datetime import datetime, timezone
 #from skimage import measure
+import io
+import contextlib
 
 
 #####################################################################################
@@ -731,15 +733,19 @@ def check_forceTSI_compositionDates(listOfFORCEoutput):
         print('all dates of composites are the same :)')
         return date_list[0]
     
-def createFORCEtileLIST(xlist, ylist):
+def createFORCEtileLIST(xlist, ylist, withDash=False):
     """
     Create a list, which entries resemble FORCE tile IDs in the format 'X00xx_Y00yy'
     Args:
         x_list (list of integer): each x tile coordinate will be paired with the y tile coordinate at the same index at ylist
         ylist (list of integer): each y tile coordinate will be paired with the x tile coordinate at the same index at xlist
         e.g. xlist[0] = 10 and ylist[0] = 20 --> 'X0010_Y0020'
+        withDash (boolean): if TRUE, X0000_Y0000
     """
-    return [f'X{x:04d}_Y{y:04d}' for x, y in zip(xlist, ylist)]
+    if withDash:
+        return [f'X{x:04d}_Y{y:04d}' for x, y in zip(xlist, ylist)]
+    else:
+        return [f'X{x:04d}Y{y:04d}' for x, y in zip(xlist, ylist)]
 
 def get_forcetiles_range(list_of_forcefiles):
     '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
@@ -1183,6 +1189,31 @@ def plotter(array, row=1, col=1, names=False, title=False):
     plt.tight_layout()
     plt.show()
 
+def plotter_side_by_side(arr1, arr2, titles=("Array 1", "Array 2"), cmap="viridis"):
+    """
+    Plots two arrays next to each other.
+
+    Parameters:
+        arr1, arr2 : arrays of the same shape
+        titles : tuple of strings, titles for each subplot
+        cmap : colormap for the images
+    """
+    if arr1.shape != arr2.shape:
+        raise ValueError("Arrays must have the same shape")
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    
+    im0 = axes[0].imshow(arr1, cmap=cmap)
+    axes[0].set_title(titles[0])
+    plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+    
+    im1 = axes[1].imshow(arr2, cmap=cmap)
+    axes[1].set_title(titles[1])
+    plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+    
+    plt.tight_layout()
+    plt.show()
+
 def getNestedListMinLengthIndex(nestedList):
     res = [index for index, band in enumerate(nestedList) if len(band) == min([len(i) for i in nestedList])]
     return res[0]
@@ -1524,7 +1555,7 @@ def maskVRT(vrtPath, maskArray):
     masked_arr =  np.dstack(b)
     makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}.tif", 0, bands=len(b))
 
-def maskVRT(vrtPath, maskArray):
+def maskVRT(vrtPath, maskArray, suffix):
     """Opens a vrt and masks it with a binary array of the same dimensions
 
     Args:
@@ -1536,8 +1567,7 @@ def maskVRT(vrtPath, maskArray):
     for band in range(ds.RasterCount):
         b.append(ds.GetRasterBand(band + 1).ReadAsArray() * maskArray)
     masked_arr =  np.dstack(b)
-    makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_S2_agromask.tif", bands=len(b))
-
+    makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}{suffix}.tif", bands=len(b))
 
 def maskVRT_water(vrtPath):
     """Opens a vrt and applies dirty water mask --> slope = NA and aspect = 180
@@ -1554,7 +1584,6 @@ def maskVRT_water(vrtPath):
     mask = np.logical_and(arr[:,:,9] < 0.000000001, arr[:,:,10] == 180)
     masked_arr = np.where(mask[:,:,None],np.nan, arr)
     makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_watermask.tif", gdalType=gdal.GDT_Float32, bands=len(b))
-
 
 def maskVRT_water_and_drop_aux(vrtPath):
     """Opens a vrt and applies dirty water mask --> slope = NA and aspect = 180
@@ -1573,3 +1602,9 @@ def maskVRT_water_and_drop_aux(vrtPath):
     masked_arr = np.where(mask[:,:,None],np.nan, arr)
     masked_arr = masked_arr[:,:,0:9]
     makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_watermask.tif", gdalType=gdal.GDT_Float32, bands=9)
+
+
+def silent(func, *args, **kwargs):
+    with contextlib.redirect_stdout(io.StringIO()):
+        return func(*args, **kwargs)
+

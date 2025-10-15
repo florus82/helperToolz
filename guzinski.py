@@ -49,27 +49,27 @@ def transform_compositeDate_into_LSTbands(compDate, dayrange):
             'band': int(day_in_month)
         }
 
-    index_in_sequence = [i+1 for i, day in enumerate(day_sequence) if day == compDate][0]
+    doy = [i+1 for i, day in enumerate(day_sequence) if day == compDate][0]
 
     # check for the special case, when compDate is YYYY0406 and dayrange == 4 as with this setting 1 April would not be processed
     # due to the FORCE processing with TSI at 9 day intervall that happened
-    if (add_to_april == 1 and index_in_sequence == 97) or (add_to_april == 0 and index_in_sequence == 96):
+    if (add_to_april == 1 and doy == 97) or (add_to_april == 0 and doy == 96):
         dayrange_low = dayrange + 1
         dayrange_up = dayrange
     else:
         dayrange_low = dayrange
         dayrange_up = dayrange
 
-    # check for the special case, when compDate is YYYY1027 and dayrange == 4 as with this setting November would be processed
-    if (add_to_april == 1 and index_in_sequence >= 302) or (add_to_april == 0 and index_in_sequence >= 301):
-        dayrange_low = dayrange
-        dayrange_up = (add_to_april + 304 - index_in_sequence)
-    else:
-        dayrange_low = dayrange
-        dayrange_up = dayrange
+    # # check for the special case, when compDate is YYYY1027 and dayrange == 4 as with this setting November would be processed
+    # if (add_to_april == 1 and doy >= 302) or (add_to_april == 0 and doy >= 301):
+    #     dayrange_low = dayrange
+    #     dayrange_up = (add_to_april + 304 - doy)
+    # else:
+    #     dayrange_low = dayrange
+    #     dayrange_up = dayrange
 
 
-    return {k: v for k, v in dicti.items() if index_in_sequence - dayrange_low <= k <= index_in_sequence + dayrange_up}
+    return {k: v for k, v in dicti.items() if doy - dayrange_low <= k <= doy + dayrange_up}
 
 
 def growingSeasonChecker(month, lower_month=4, upper_month=10):
@@ -106,12 +106,13 @@ def temp_pressure_checker(list_of_era5_variables):
             pass
     
     if temp_ind < press_ind:
-        print('temperature will be processed before surface pressure - continue')
+        pass
+        # print('temperature will be processed before surface pressure - continue')
     else:
         cont = list_of_era5_variables[press_ind]
         list_of_era5_variables[press_ind] = list_of_era5_variables[temp_ind]
         list_of_era5_variables[temp_ind] = cont
-        print('2m_temperature and surface pressure swaped and now in right order - continue')
+        # print('2m_temperature and surface pressure swaped and now in right order - continue')
 
  
 def warp_ERA5_to_reference(grib_path, reference_path, output_path='MEM', bandL='ALL', resampling='bilinear', NoData=False, 
@@ -328,7 +329,7 @@ def get_warped_ERA5_at_doy(path_to_era_grib, reference_path, lst_acq_file, doy, 
     # open and load the acquisition raster from LST
     LST_acq_ds = checkPath(lst_acq_file)
     
-    # her should be a loop if we go for more than one day
+    # here should be a loop if we go for more than one day
     arr = LST_acq_ds.GetRasterBand(doy).ReadAsArray()
     arr = arr.astype(np.int64)
     arr_flat = arr.ravel()
@@ -356,7 +357,8 @@ def get_warped_ERA5_at_doy(path_to_era_grib, reference_path, lst_acq_file, doy, 
         before = era_ds.GetRasterBand(b-1).ReadAsArray()
         # calculate the linearly interpolated values at the minute of acquisition
         vals = before - (before - after) * (np.array(arr_min, dtype=np.float16) / 60)
-        arrL.append(vals * mask)
+        vals_masked = np.where(mask, vals, np.nan)
+        arrL.append(vals_masked)
     block = np.dstack(arrL)
 
     return np.nanmax(block, axis = 2)
@@ -598,7 +600,51 @@ def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, 
     azimuth_arr = np.full(slope.shape, np.nan)
     azimuth_arr[valid_mask] = solpos['azimuth'].to_numpy()
 
-    return poa_global_arr, zenith_arr, azimuth_arr, ssrd_watt # *3600 to bring back to J/m²
+    # calculate also the daily ssrd mean 
+    meanL = []
+    for count, e5 in enumerate(era_time):
+        if e5.day == doy:
+            ssrd_hour = era_ds.GetRasterBand(count).ReadAsArray()
+            if np.sum(ssrd_hour) == 0:
+                continue
+            else:
+                time_hour = np.full((len(lat_flat_masked),), e5)
+            # get solar viewing conditions for acquisition time
+            
+            solpos = solarposition.get_solarposition(
+                time=time_hour,       # vector of timestamps
+                latitude=lat_flat_masked, # vector of latitudes (same length as time or broadcastable)
+                longitude=lon_flat_masked,
+                altitude=dem_flat_masked
+            )
+
+                        # Compute clearness index
+            ghi = ssrd_hour / 3600
+            ghi_masked = ghi[valid_mask]
+            # Decompose GHI to DNI and DHI using Erbs model
+            dni_dhi = pvlib.irradiance.erbs(ghi_masked.ravel(), solpos['zenith'], e5)
+            dni, dhi = dni_dhi['dni'], dni_dhi['dhi']
+
+            # compute radiation on the tilted terrain
+            irradiance_tilted = get_total_irradiance(
+            surface_tilt=slope_flat_masked,
+            surface_azimuth=aspect_flat_masked,
+            dni=dni,
+            ghi=ghi_masked.ravel(),
+            dhi=dhi,
+            solar_zenith=solpos['zenith'],
+            solar_azimuth=solpos['azimuth']
+            )
+
+            # put back into raster shape
+            irr_2D = np.full(slope.shape, np.nan)
+            irr_2D[valid_mask] = irradiance_tilted['poa_global']
+            meanL.append(irr_2D)
+
+    ssrd_mean = np.nansum(np.dstack(meanL), axis=2) / 24 # np.nanmean(np.dstack(meanL), axis = 2)
+    ssrd_mean = ssrd_mean.reshape(slope.shape)
+
+    return poa_global_arr, zenith_arr, azimuth_arr, ssrd_watt, ssrd_mean # *3600 to bring back to J/m²
     
 
 def applyAdiabaticDEMsharpener(era5_temp, dem, geopot, rate, bheight):
