@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader   
 import matplotlib.pyplot as plt
-sys.path.append('../')                                                      
+sys.path.append('/media/other_repos/')                                                      
 from tfcl.models.ptavit3d.ptavit3d_dn import ptavit3d_dn       
 from tfcl.nn.loss.ftnmt_loss import ftnmt_loss               
 from tfcl.utils.classification_metric import Classification  

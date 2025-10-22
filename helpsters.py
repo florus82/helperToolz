@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 #from skimage import measure
 import io
 import contextlib
-
+#from helper import *
 
 #####################################################################################
 #####################################################################################
@@ -114,7 +114,7 @@ def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack):
 
     return preds
 
-def export_GPU_predictions(list_of_predictions, path_to_mask, vrt_path, list_of_row_col_indices, out_path):
+def export_GPU_predictions(list_of_predictions, path_to_mask, vrt_path, list_of_row_col_indices, out_path, chipsize, overlap):
     '''
     list_of_predictions: a list of predicted chips at same dimensions (output from predict_on_GPU
     path_to_mask: a path to mask that has the same dimensions as the vrt on which predictions have been undertaken
@@ -142,7 +142,7 @@ def export_GPU_predictions(list_of_predictions, path_to_mask, vrt_path, list_of_
     mask = ds.GetRasterBand(1).ReadAsArray()
 
     for fold in ['chips/', 'masked_chips/']:
-        os.makedirs(f'{out_path}[fold]', exist_ok=True)
+        os.makedirs(f'{out_path}{fold}', exist_ok=True)
 
     for i, file in enumerate(filenames):
         for j in ['chips/', 'masked_chips/']:
@@ -301,6 +301,14 @@ def getDataFromNC_VZA(ncfile):
     if type(ncfile) == str:
         ncfile = xr.open_dataset(ncfile)
     arr = ncfile[[b for b in ','.join(ncfile.data_vars.keys()).split(',') if (b == 'viewZenithAngles')][0]].to_numpy() # makes sure that LST exists
+    return np.swapaxes(np.swapaxes(arr, 0, 1), 1, 2)
+
+def getDataFromNC_VAA(ncfile):
+    '''Takes a path to an ncfile or an xarray_dataset and returns a 3D numpy array of the data'''
+    
+    if type(ncfile) == str:
+        ncfile = xr.open_dataset(ncfile)
+    arr = ncfile[[b for b in ','.join(ncfile.data_vars.keys()).split(',') if (b == 'viewAzimuthAngles')][0]].to_numpy() # makes sure that LST exists
     return np.swapaxes(np.swapaxes(arr, 0, 1), 1, 2)
 
 def getCRS_WKTfromNC(ncfile):
@@ -752,16 +760,23 @@ def get_forcetiles_range(list_of_forcefiles):
     creats a string that indicates X and Y extremes from list_of_forcefiles'''
     return list(set([re.search(r'X\d{4}_Y\d{4}', tile).group() for tile in list_of_forcefiles]))
 
-# def force_order_Colors(list_of_forcefiles):
-#     '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
-#         will return a list that orders the input list to blue, green, red, ir independently from tiles and dates'''
-#     tiles = list(set([file.split('output/')[-1].split('/')[2].split('/')[0] for file in list_of_forcefiles]))
-#     tilefilesL = []
-#     for tile in tiles:
-#         tilefiles = [file for file in list_of_forcefiles if tile in file]
-#         tilefilesL.append(getCOLORSinOrderFORCELIST(tilefiles))
-    
-#     return tilefilesL
+def force_order_Colors_for_VRT(list_of_forcefiles, list_of_colors, list_of_days):
+    '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
+        will return a list that orders the input list to blue, green, red, ir independently from tiles and dates'''
+    tiles = list(set([file.split('output/')[-1].split('/')[2].split('/')[0] for file in list_of_forcefiles]))
+    tilefilesL = []
+    for color in list_of_colors:
+        for day in list_of_days:
+            for tile in tiles:
+                for file in list_of_forcefiles:
+                    if tile in file and color in file and day in file and tile in file:
+                        tilefilesL.append(file)
+
+
+    if len(tilefilesL) == len(list_of_colors) * len(list_of_days) * len(tiles):
+        return [tilefilesL[i:i+len(tiles)] for i in range(0, len(tilefilesL), len(tiles))]
+    else:
+        raise ValueError('length of colors, days and files do not line up')
 
 def force_to_vrt(list_of_forcefiles, ordered_forcetiles, vrt_out_path, pyramids=False, bandnames=False):
     '''list_of_forcefiles: e.g. output from reduce_force_to_validmonths
@@ -830,6 +845,7 @@ def loadVRTintoNumpyAI4(vrtPath):
         ds = gdal.Open(vrt)
         bands.append(ds.GetRasterBand(1).ReadAsArray())
     cube = np.dstack(bands)
+   
     data_cube = np.transpose(cube, (2, 0, 1))
     reshaped_cube = data_cube.reshape(4, 6, ds.RasterYSize, ds.RasterXSize)
     normalizer = AI4BNormal_S2()
@@ -1581,7 +1597,7 @@ def maskVRT_water(vrtPath):
     for band in range(ds.RasterCount):
         b.append(ds.GetRasterBand(band + 1).ReadAsArray())
     arr =  np.dstack(b)
-    mask = np.logical_and(arr[:,:,9] < 0.000000001, arr[:,:,10] == 180)
+    mask = np.logical_and(arr[:,:,10] < 0.000000001, arr[:,:,11] == 180)
     masked_arr = np.where(mask[:,:,None],np.nan, arr)
     makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_watermask.tif", gdalType=gdal.GDT_Float32, bands=len(b))
 
@@ -1598,9 +1614,9 @@ def maskVRT_water_and_drop_aux(vrtPath):
     for band in range(ds.RasterCount):
         b.append(ds.GetRasterBand(band + 1).ReadAsArray())
     arr =  np.dstack(b)
-    mask = np.logical_and(arr[:,:,9] < 0.000000001, arr[:,:,10] == 180)
+    mask = np.logical_and(arr[:,:,10] < 0.000000001, arr[:,:,11] == 180)
     masked_arr = np.where(mask[:,:,None],np.nan, arr)
-    masked_arr = masked_arr[:,:,0:9]
+    masked_arr = masked_arr[:,:,0:10]
     makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_watermask.tif", gdalType=gdal.GDT_Float32, bands=9)
 
 

@@ -7,8 +7,8 @@ if sys.version_info < (3, 8):
 else:
     import pickle as mypickler
 
-sys.path.append('/home/potzschf/repos/')
-from helperToolz.feevos.xlogger import *  # Necessary for saving keys 
+
+from feevos.xlogger import *  # Necessary for saving keys 
 import os 
 import ast # Reads keys
 import pandas as pd # Reads keys
@@ -241,8 +241,8 @@ class RocksDBReader(_RocksDBBase):
 ### Convenience class that writes data into database
 from time import time
 from datetime import timedelta
-from helperToolz.feevos.rasteriter import RasterMaskIterableInMemory 
-from helperToolz.feevos.progressbar import progressbar
+from feevos.rasteriter import RasterMaskIterableInMemory 
+from feevos.progressbar import progressbar
 class Rasters2RocksDB(object):
     def __init__(self, 
                  lstOfTuplesNames, 
