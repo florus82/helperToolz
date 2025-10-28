@@ -2,21 +2,27 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio, glob, xarray as xr
-import os,sys
-import albumentations as A
-from albumentations.core.transforms_interface import  ImageOnlyTransform
-import torch
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader   
-import matplotlib.pyplot as plt
-sys.path.append('/media/other_repos/')                                                      
-from tfcl.models.ptavit3d.ptavit3d_dn import ptavit3d_dn       
-from tfcl.nn.loss.ftnmt_loss import ftnmt_loss               
-from tfcl.utils.classification_metric import Classification  
 from datetime import datetime
 import time
+import math
 import higra as hg
 from osgeo import gdal
+from skimage import measure
+
+import os,sys
+
+if 'workhorse' not in sys.executable.split('/'):
+    import albumentations as A
+    from albumentations.core.transforms_interface import  ImageOnlyTransform
+    import torch
+    from torch.utils.data import Dataset
+    from torch.utils.data import DataLoader   
+    import matplotlib.pyplot as plt
+    sys.path.append('/media/other_repos/')                                                      
+    from tfcl.models.ptavit3d.ptavit3d_dn import ptavit3d_dn       
+    from tfcl.nn.loss.ftnmt_loss import ftnmt_loss               
+    from tfcl.utils.classification_metric import Classification  
+
 
 
 def getFilelist(originpath, ftyp, deep = False, order = True):

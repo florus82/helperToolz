@@ -121,9 +121,9 @@ def make_crop_mask(path_to_polygon, path_to_rasterized_lines, path_to_extent_ras
         target_ds = None
     else:
         print(f'Mask for {path_to_polygon} already exists!!!')
-    # mask the output with rasterized lines to clean up
 
-    path_linecrop_out = path_to_mask_out.split('.')[0] + '_lines_touch_' + path_to_rasterized_lines.split('_')[-1].split('.')[0] + '_linecrop.tif'
+    # mask the output with rasterized lines to clean up
+    path_linecrop_out = path_to_mask_out.split('.')[0] + '_linecrop.tif' # + '_lines_touch_' + path_to_rasterized_lines.split('_')[-1].split('.')[0]
     if not os.path.exists(path_linecrop_out):
         mask_ds = gdal.Open(path_to_mask_out)
         mask = mask_ds.GetRasterBand(1).ReadAsArray()

@@ -9,13 +9,17 @@ import osgeo
 from osgeo import ogr, osr
 import xml.etree.ElementTree as ET
 import re
+import pickle
 from itertools import chain
 import hashlib
 from datetime import datetime, timezone
 #from skimage import measure
 import io
 import contextlib
-#from helper import *
+
+import sys
+sys.path.append('/media/')
+from helperToolz.helper import *
 
 #####################################################################################
 #####################################################################################
@@ -57,7 +61,7 @@ def get_row_col_indices(chipsize, overlap, number_of_rows, number_of_cols):
 
     return [row_start, row_end, col_start, col_end]
 
-def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack):
+def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack, temp_path = False):
     '''
     path_to_model: path to .pth file
     list_of_row_col_indices: a list in the order row_start, row_end, col_start, col_end (output of get_row_col_indices). This will be used to read in small chips from npdstack
@@ -112,12 +116,20 @@ def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack):
     del device
     del image
 
+    if temp_path:
+        with open(path_safe(f'{temp_path}preds.pkl'), 'wb') as f:
+            pickle.dump(preds, f)
+
+    # Load (restore) later
+    with open(f'{temp_path}preds.pkl', 'rb') as f:
+        preds = pickle.load(f)
+
     return preds
 
 def export_GPU_predictions(list_of_predictions, path_to_mask, vrt_path, list_of_row_col_indices, out_path, chipsize, overlap):
     '''
     list_of_predictions: a list of predicted chips at same dimensions (output from predict_on_GPU
-    path_to_mask: a path to mask that has the same dimensions as the vrt on which predictions have been undertaken
+    path_to_mask: a path to mask that has the same dimensions as the vrt on which predictions have been undertaken; can be also a list of masks
     vrt_path: path to a folder that contains the vrt files, the predictions (and mask) is based on. Will be used for GeoTransform and Projection
     list_of_row_col_indices: a list in the order row_start, row_end, col_start, col_end (output of get_row_col_indices). 
                                 Will be used to read in mask chips and manipulate Geotransform
@@ -137,38 +149,92 @@ def export_GPU_predictions(list_of_predictions, path_to_mask, vrt_path, list_of_
     geoTF = vrt_ds.GetGeoTransform()
     filenames = [f'X_{col_start[j]}_Y_{row_start[i]}.tif' for i in range(len(row_start)) for j in range(len(col_start))]
 
-    # load mask
-    ds = gdal.Open(path_to_mask)
-    mask = ds.GetRasterBand(1).ReadAsArray()
-
-    for fold in ['chips/', 'masked_chips/']:
-        os.makedirs(f'{out_path}{fold}', exist_ok=True)
-
+    # export unmasked chips
     for i, file in enumerate(filenames):
-        for j in ['chips/', 'masked_chips/']:
-            out_ds = gtiff_driver.Create(f'{out_path}{j}{str(chipsize)}_{overlap}_{file}', int(chipsize - overlap), int(chipsize - overlap), 3, gdal.GDT_Float32)
-            # change the Geotransform for each chip
-            geotf = list(geoTF)
-            # get column and rows from filenames
-            geotf[0] = geotf[0] + geotf[1] * (int(file.split('X_')[-1].split('_')[0]) + overlap/2)
-            geotf[3] = geotf[3] + geotf[5] * (int(file.split('Y_')[-1].split('.')[0]) + overlap/2)
-            #print(f'X:{geoTF[0]}  Y:{geoTF[3]}  AT {file}')
-            out_ds.SetGeoTransform(tuple(geotf))
-            out_ds.SetProjection(vrt_ds.GetProjection())
+        out_ds = gtiff_driver.Create(path_safe(f'{out_path}unmasked_chips/chips_unmasked{str(chipsize)}_{overlap}_{file}'), int(chipsize - overlap), int(chipsize - overlap), 3, gdal.GDT_Float32)
+        # change the Geotransform for each chip
+        geotf = list(geoTF)
+        # get column and rows from filenames
+        geotf[0] = geotf[0] + geotf[1] * (int(file.split('X_')[-1].split('_')[0]) + overlap/2)
+        geotf[3] = geotf[3] + geotf[5] * (int(file.split('Y_')[-1].split('.')[0]) + overlap/2)
+        #print(f'X:{geoTF[0]}  Y:{geoTF[3]}  AT {file}')
+        out_ds.SetGeoTransform(tuple(geotf))
+        out_ds.SetProjection(vrt_ds.GetProjection())
 
-            arr = list_of_predictions[i][0].transpose(1, 2, 0)
-            if j == 'masked_chips/':
+        arr = list_of_predictions[i][0].transpose(1, 2, 0)
+        for band in range(3):
+            out_ds.GetRasterBand(band + 1).WriteArray(arr[int(overlap/2): -int(overlap/2), int(overlap/2): -int(overlap/2), band])
+        del out_ds
+
+    print('umnasked chips exported')
+
+    # check if mask is a list or single mask
+    if isinstance(path_to_mask, list):
+        print('list of masks provided - start exporting')
+        for maski in path_to_mask:
+            mask_name = maski.split('cropMask_')[-1].split('.')[0]
+
+            # load mask
+            ds = gdal.Open(maski)
+            mask = ds.GetRasterBand(1).ReadAsArray()
+
+            for i, file in enumerate(filenames):
+                out_ds = gtiff_driver.Create(path_safe(f'{out_path}{mask_name}/{mask_name}_{str(chipsize)}_{overlap}_{file}'), int(chipsize - overlap), int(chipsize - overlap), 3, gdal.GDT_Float32)
+                # change the Geotransform for each chip
+                geotf = list(geoTF)
+                # get column and rows from filenames
+                geotf[0] = geotf[0] + geotf[1] * (int(file.split('X_')[-1].split('_')[0]) + overlap/2)
+                geotf[3] = geotf[3] + geotf[5] * (int(file.split('Y_')[-1].split('.')[0]) + overlap/2)
+                #print(f'X:{geoTF[0]}  Y:{geoTF[3]}  AT {file}')
+                out_ds.SetGeoTransform(tuple(geotf))
+                out_ds.SetProjection(vrt_ds.GetProjection())
+
+                arr = list_of_predictions[i][0].transpose(1, 2, 0)
+
                 maskSub = mask[int(int(file.split('Y_')[-1].split('.')[0]) + overlap/2):chipsize + int(int(file.split('Y_')[-1].split('.')[0]) - overlap/2), 
                             int(int(file.split('X_')[-1].split('_')[0]) + overlap/2):chipsize + int(int(file.split('X_')[-1].split('_')[0]) - overlap/2)]
                 for band in range(3):                
                     out_ds.GetRasterBand(band + 1).WriteArray(arr[int(overlap/2): -int(overlap/2), int(overlap/2): -int(overlap/2), band] * maskSub)
                 del out_ds
-            else:
-                for band in range(3):
-                    out_ds.GetRasterBand(band + 1).WriteArray(arr[int(overlap/2): -int(overlap/2), int(overlap/2): -int(overlap/2), band])
-                del out_ds
+             
 
-def predicted_chips_to_vrt(path_to_chips, chipsize, overlap, path_to_folder_out, pyramids=False):
+
+
+
+
+    # # load mask
+    # ds = gdal.Open(path_to_mask)
+    # mask = ds.GetRasterBand(1).ReadAsArray()
+
+    # for fold in ['chips/', 'masked_chips/']:
+    #     os.makedirs(f'{out_path}{fold}', exist_ok=True)
+
+    # for i, file in enumerate(filenames):
+    #     for j in ['chips/', 'masked_chips/']:
+    #         out_ds = gtiff_driver.Create(f'{out_path}{j}{str(chipsize)}_{overlap}_{file}', int(chipsize - overlap), int(chipsize - overlap), 3, gdal.GDT_Float32)
+    #         # change the Geotransform for each chip
+    #         geotf = list(geoTF)
+    #         # get column and rows from filenames
+    #         geotf[0] = geotf[0] + geotf[1] * (int(file.split('X_')[-1].split('_')[0]) + overlap/2)
+    #         geotf[3] = geotf[3] + geotf[5] * (int(file.split('Y_')[-1].split('.')[0]) + overlap/2)
+    #         #print(f'X:{geoTF[0]}  Y:{geoTF[3]}  AT {file}')
+    #         out_ds.SetGeoTransform(tuple(geotf))
+    #         out_ds.SetProjection(vrt_ds.GetProjection())
+
+    #         arr = list_of_predictions[i][0].transpose(1, 2, 0)
+    #         if j == 'masked_chips/':
+    #             maskSub = mask[int(int(file.split('Y_')[-1].split('.')[0]) + overlap/2):chipsize + int(int(file.split('Y_')[-1].split('.')[0]) - overlap/2), 
+    #                         int(int(file.split('X_')[-1].split('_')[0]) + overlap/2):chipsize + int(int(file.split('X_')[-1].split('_')[0]) - overlap/2)]
+    #             for band in range(3):                
+    #                 out_ds.GetRasterBand(band + 1).WriteArray(arr[int(overlap/2): -int(overlap/2), int(overlap/2): -int(overlap/2), band] * maskSub)
+    #             del out_ds
+    #         else:
+    #             for band in range(3):
+    #                 out_ds.GetRasterBand(band + 1).WriteArray(arr[int(overlap/2): -int(overlap/2), int(overlap/2): -int(overlap/2), band])
+    #             del out_ds
+
+
+def predicted_chips_to_vrt(path_to_chips, chipname, chipsize, overlap, path_to_folder_out, pyramids=False):
     '''
     path_to_chips: path to chips exported via export_GPU_predictions
     chipsize + overlap: the size of these chips (in order to select the chips if chips from different predictions are in the same folder)
@@ -178,22 +244,22 @@ def predicted_chips_to_vrt(path_to_chips, chipsize, overlap, path_to_folder_out,
         path_to_folder_out = path_to_folder_out + '/'
     if not path_to_chips.endswith('/'):
         path_to_chips = path_to_chips + '/'  
-    file_end = path_to_chips.split('/')[-2]
-    
+    path_to_chips = f'{path_to_chips}{chipname}/'
     os.makedirs(path_to_folder_out, exist_ok=True)
 
     chip_id = f'{chipsize}_{overlap}'
     chips = getFilelist(path_to_chips, '.tif')
     chips = [chip for chip in chips if chip_id in chip]
 
-    for c in chips:print(c)
+    # for c in chips:print(c)
     # create stacked vrts of chips
-    vrt = gdal.BuildVRT(f'{path_to_folder_out}{chipsize}_{overlap}_{file_end}.vrt', chips, separate = False)
+    vrt_name = f'{path_to_folder_out}{chipname}_{chipsize}_{overlap}.vrt'
+    vrt = gdal.BuildVRT(vrt_name, chips, separate = False)
     vrt = None
-    convertVRTpathsTOrelative(f'{path_to_folder_out}{chipsize}_{overlap}_{file_end}.vrt')
+    convertVRTpathsTOrelative(vrt_name)
 
     if pyramids:
-        vrtPyramids(f'{path_to_folder_out}{chipsize}_{overlap}_{file_end}.vrt')
+        vrtPyramids(vrt_name)
 
 def subset_mask_to_prediction_extent(path_reference_mask, path_to_prediction_vrt):
     '''
@@ -993,22 +1059,24 @@ def InstSegm(extent, boundary, t_ext=0.4, t_bound=0.2):
     return instances
 
 def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext, 
-             t_bound, dummy_gt, dummy_proj, intermediate_path, border_limit=10):
+             t_bound, dummy_gt, dummy_proj, intermediate_path, border_limit=10, intermediate=True):
 
     row_start = int(row_col_start.split('_')[0])
     col_start = int(row_col_start.split('_')[1])
     # get predicted instance segmentation
     instances_pred = InstSegm(extent_pred, boundary_pred, t_ext=t_ext, t_bound=t_bound)
     instances_pred = measure.label(instances_pred, background=-1) 
-    export_intermediate_products(row_col_start, instances_pred, dummy_gt, dummy_proj,\
-                                  intermediate_path, filename=f'{t_ext}_{t_bound}_instance_pred_{row_col_start}.tif', noData=0)
+    if intermediate:
+        export_intermediate_products(row_col_start, instances_pred, dummy_gt, dummy_proj,\
+                                    intermediate_path, filename=f'{t_ext}_{t_bound}_instance_pred_{row_col_start}.tif', noData=0)
 
     # get instances from ground truth label; already done globally during joblist creation
     # binary_true = extent_true > 0
     # instances_true = measure.label(binary_true, background=0, connectivity=1)
     instances_true = extent_true
-    export_intermediate_products(row_col_start, instances_true, dummy_gt, dummy_proj,\
-                                  intermediate_path, filename=f'{t_ext}_{t_bound}_instance_true_{row_col_start}.tif', noData=0)
+    if intermediate:
+        export_intermediate_products(row_col_start, instances_true, dummy_gt, dummy_proj,\
+                                    intermediate_path, filename=f'{t_ext}_{t_bound}_instance_true_{row_col_start}.tif', noData=0)
 
     # loop through true fields
     field_values = np.unique(instances_true)
@@ -1082,8 +1150,9 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
     # centroids
     for r,c, cid in zip(centroid_rows, centroid_cols, centroid_IDs):
         filtered_instances_pred[r, c] = cid
-    export_intermediate_products(row_col_start, filtered_instances_pred, dummy_gt, dummy_proj, \
-                                 intermediate_path, filename=f'{t_ext}_{t_bound}_intersected_at_max_and_centroids_{row_col_start}.tif', noData=0)
+    if intermediate:
+        export_intermediate_products(row_col_start, filtered_instances_pred, dummy_gt, dummy_proj, \
+                                    intermediate_path, filename=f'{t_ext}_{t_bound}_intersected_at_max_and_centroids_{row_col_start}.tif', noData=0)
 
     
     # centers = np.zeros_like(filtered_instances_pred)
@@ -1098,7 +1167,7 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
 ########## main-function
 
 def get_IoUs_per_Tile(tile, row_col_start, extent_true, extent_pred, boundary_pred, result_dir, \
-                      dummy_gt, dummy_proj, intermediate_path, border_limit=10):
+                      dummy_gt, dummy_proj, intermediate_path, border_limit=10, intermediate=True):
     print(f'Starting on tile {tile}')
     # make a dictionary for export
     k = ['tile','t_ext','t_bound', 'max_IoU', 'centroid_IoU', 'centroid_row', 'centroid_col',\
@@ -1117,7 +1186,7 @@ def get_IoUs_per_Tile(tile, row_col_start, extent_true, extent_pred, boundary_pr
 
             img_IoUs, centroid_IoUS, centroid_rows, centroid_cols, field_IDs, field_sizes = \
                 get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext, t_bound, dummy_gt, \
-                         dummy_proj, intermediate_path, border_limit=border_limit)
+                         dummy_proj, intermediate_path, border_limit=border_limit, intermediate=intermediate)
             
             for e, IoUs in enumerate(img_IoUs):
     
@@ -1623,4 +1692,27 @@ def maskVRT_water_and_drop_aux(vrtPath):
 def silent(func, *args, **kwargs):
     with contextlib.redirect_stdout(io.StringIO()):
         return func(*args, **kwargs)
+    
+def path_safe(path):
+    """when storing a file, this function makes sure that the directory exists, where file will be stored
+
+    Args:
+        path (str): path to file (or directory)
+    """
+    if os.path.isdir(os.path.dirname(path)):
+        return path
+    else:
+        os.makedirs(os.path.dirname(path))
+        return path
+
+def dirfinder(path):
+    """ returns a list with all directory names within a folder
+
+    Args:
+        path (str): str path to folder that will be searched for directories
+
+    Returns:
+        list: list of directory names (str)
+    """
+    return [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
 
