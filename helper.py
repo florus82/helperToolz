@@ -15,6 +15,7 @@ if 'workhorse' not in sys.executable.split('/'):
     import albumentations as A
     from albumentations.core.transforms_interface import  ImageOnlyTransform
     import torch
+    from torch.amp import autocast, GradScaler
     from torch.utils.data import Dataset
     from torch.utils.data import DataLoader   
     import matplotlib.pyplot as plt

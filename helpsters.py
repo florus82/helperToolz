@@ -13,7 +13,7 @@ import pickle
 from itertools import chain
 import hashlib
 from datetime import datetime, timezone
-#from skimage import measure
+from skimage import measure
 import io
 import contextlib
 
@@ -120,9 +120,9 @@ def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack, temp_path =
         with open(path_safe(f'{temp_path}preds.pkl'), 'wb') as f:
             pickle.dump(preds, f)
 
-    # Load (restore) later
-    with open(f'{temp_path}preds.pkl', 'rb') as f:
-        preds = pickle.load(f)
+    # Load again
+    # with open(f'{temp_path}preds.pkl', 'rb') as f:
+    #     preds = pickle.load(f)
 
     return preds
 
@@ -232,7 +232,6 @@ def export_GPU_predictions(list_of_predictions, path_to_mask, vrt_path, list_of_
     #             for band in range(3):
     #                 out_ds.GetRasterBand(band + 1).WriteArray(arr[int(overlap/2): -int(overlap/2), int(overlap/2): -int(overlap/2), band])
     #             del out_ds
-
 
 def predicted_chips_to_vrt(path_to_chips, chipname, chipsize, overlap, path_to_folder_out, pyramids=False):
     '''
@@ -606,9 +605,7 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
         return warped_ds
     else:
         print(f"Raster warped and saved to: {output_path}")
-
-
-            
+         
 def mask_raster(path_to_source, path_to_mask, outPath, noData=False):
     '''
     path_to_source: the raster that will be masked
@@ -651,6 +648,7 @@ def getValsatMaxIndex(arr1, arr2):
     rows, cols = np.indices(arr1.shape[0:2])
 
     return arr2[rows, cols, idx]
+
 #####################################################################################
 #####################################################################################
 ################# Preprocess FORCE Output ###########################################
@@ -1058,25 +1056,24 @@ def InstSegm(extent, boundary, t_ext=0.4, t_bound=0.2):
 
     return instances
 
-def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext, 
-             t_bound, dummy_gt, dummy_proj, intermediate_path, border_limit=10, intermediate=True):
 
-    row_start = int(row_col_start.split('_')[0])
-    col_start = int(row_col_start.split('_')[1])
+def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext, 
+             t_bound, dummy_gt, dummy_proj, intermediate_path, intermediate=True):
+    
     # get predicted instance segmentation
     instances_pred = InstSegm(extent_pred, boundary_pred, t_ext=t_ext, t_bound=t_bound)
     instances_pred = measure.label(instances_pred, background=-1) 
-    if intermediate:
-        export_intermediate_products(row_col_start, instances_pred, dummy_gt, dummy_proj,\
-                                    intermediate_path, filename=f'{t_ext}_{t_bound}_instance_pred_{row_col_start}.tif', noData=0)
+    if intermediate and row_col_start == '10760_17982':
+            export_intermediate_products(row_col_start, instances_pred, dummy_gt, dummy_proj,\
+                                        intermediate_path, filename=f'{t_ext}_{t_bound}_instance_pred_{row_col_start}.tif', noData=0)
 
     # get instances from ground truth label; already done globally during joblist creation
     # binary_true = extent_true > 0
     # instances_true = measure.label(binary_true, background=0, connectivity=1)
     instances_true = extent_true
-    if intermediate:
-        export_intermediate_products(row_col_start, instances_true, dummy_gt, dummy_proj,\
-                                    intermediate_path, filename=f'{t_ext}_{t_bound}_instance_true_{row_col_start}.tif', noData=0)
+    if intermediate and row_col_start == '10760_17982':
+            export_intermediate_products(row_col_start, instances_true, dummy_gt, dummy_proj,\
+                                        intermediate_path, filename=f'{t_ext}_{t_bound}_instance_true_{row_col_start}.tif', noData=0)
 
     # loop through true fields
     field_values = np.unique(instances_true)
@@ -1084,24 +1081,21 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
     best_IoUs = []
     field_IDs = []
     field_sizes = []
+    pred_field_overlap = []
     centroid_rows = []
     centroid_cols = []
     centroid_IoUS = []
     centroid_IDs = []
-    intersectL  = []
+    intersect_IDs  = []
 
-    for field_value in field_values:
+    for field_value in field_values: # loops over the sampled IACS poylgons
         if field_value == 0:
             continue # move on to next value
-    
-        this_field = instances_true == field_value
-        # # check if field is close to border and throw away if too close
-        # if TooCloseToBorder(this_field, border_limit):
-        #     continue
 
-        # calculate centroid
-        this_field_centroid = np.mean(np.column_stack(np.where(this_field)),axis=0).astype(int)
+        this_field = instances_true == field_value # makes a binary raster for the respective sampled IACS poylgon
+        this_field_centroid = np.mean(np.column_stack(np.where(this_field)),axis=0).astype(int) # calculates the centroid of that polygon
         
+
         # fill lists with info
         centroid_rows.append(this_field_centroid[0])
         centroid_cols.append(this_field_centroid[1])
@@ -1109,69 +1103,76 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
         field_sizes.append(np.sum(this_field))
         
         # find predicted fields that intersect with true field
-        intersecting_fields = this_field * instances_pred
-        intersect_values = np.unique(intersecting_fields)
+        intersecting_fields = this_field * instances_pred # multiplies binary raster of sampled IACS poylgon with prediction --> only overlapping predicted fields in raster
+        intersect_values = np.unique(intersecting_fields) # get the labeled IDS from intersecting predicted fields
   
         # compute IoU for each intersecting field
         field_IoUs = []
-        center_IoU = 0
+        intersect_area = []
+        centroid_IoU = 0
+        centroid_ID = 0
+
         for intersect_value in intersect_values:
             if intersect_value == 0:
                 field_IoUs.append(0)
+                intersect_area.append(0)
                 continue # move on to next value
             
-            pred_field = instances_pred == intersect_value
+            pred_field = instances_pred == intersect_value # makes a binary raster of of intersecting predicted field
+            pred_field_area = np.sum(pred_field) # calculates the area of that polygon
+
+            # calculate IoU
             union = this_field + pred_field > 0
             intersection = (this_field * pred_field) > 0
             IoU = np.sum(intersection) / np.sum(union)
             field_IoUs.append(IoU)
+            intersect_area.append(np.sum(intersection) / pred_field_area)
+
             # check for centroid condition
             if instances_pred[this_field_centroid[0], this_field_centroid[1]] == intersect_value:
-                center_IoU = IoU
-                centroid_IDs.append(field_value)
+                centroid_IoU = IoU
+                centroid_ID = intersect_value
     
         # take maximum IoU - this is the IoU for this true field
-        if len(field_IoUs) != 0:
+        if len(field_IoUs) > 1 or field_IoUs[0] != 0:
             best_IoUs.append(np.max(field_IoUs))
-            # fill centroid list
-            centroid_IoUS.append(center_IoU)
-            max_index = np.argmax(field_IoUs)
-            intersectL.append(intersect_values[max_index])
-    
+            pred_field_overlap.append(intersect_area[np.argmax(field_IoUs)])
+            intersect_IDs.append(intersect_values[np.argmax(field_IoUs)])
         else:
             best_IoUs.append(0)
-            # fill centroid list
-            centroid_IoUS.append(0)
+            pred_field_overlap.append(0)
+            intersect_IDs.append(0)
+        
+        # fill centroid list
+        centroid_IoUS.append(centroid_IoU)
+        centroid_IDs.append(centroid_ID)
     
 
-    # Create mask of intersecting fields with best IoUs
-    intersect_mask = np.isin(instances_pred, intersectL)
-    filtered_instances_pred = instances_pred * intersect_mask
-    # centroids
-    for r,c, cid in zip(centroid_rows, centroid_cols, centroid_IDs):
-        filtered_instances_pred[r, c] = cid
-    if intermediate:
-        export_intermediate_products(row_col_start, filtered_instances_pred, dummy_gt, dummy_proj, \
-                                    intermediate_path, filename=f'{t_ext}_{t_bound}_intersected_at_max_and_centroids_{row_col_start}.tif', noData=0)
+    # export centroids and intersecting fields with best IoUs
+    if intermediate and row_col_start == '10760_17982':
 
-    
-    # centers = np.zeros_like(filtered_instances_pred)
-    # for r,c, cid in zip(centroid_rows, centroid_cols, centroid_IDs):
-    #     centers[r, c] = cid
-    # export_intermediate_products(row_col_start, centers, dummy_gt, dummy_proj, intermediate_path, \
-    #                              filename=f'{t_ext}_{t_bound}_centroids_{row_col_start}.tif')
-    
-    
-    return best_IoUs, centroid_IoUS, centroid_rows, centroid_cols, field_IDs, field_sizes
+            # Create mask of intersecting fields with best IoUs
+            intersect_mask = np.isin(instances_pred, centroid_IDs)# intersectL)
+            filtered_instances_pred = instances_pred * intersect_mask
+            
+            # centroids
+            for r,c, cid in zip(centroid_rows, centroid_cols, centroid_IDs):
+                filtered_instances_pred[r, c] = cid
+
+                export_intermediate_products(row_col_start, filtered_instances_pred, dummy_gt, dummy_proj, \
+                                            intermediate_path, filename=f'{t_ext}_{t_bound}_intersected_at_max_and_centroids_{row_col_start}.tif', noData=0)
+
+    return best_IoUs, centroid_IoUS, centroid_rows, centroid_cols, centroid_IDs, field_IDs, field_sizes, intersect_IDs, pred_field_overlap
 
 ########## main-function
 
-def get_IoUs_per_Tile(tile, row_col_start, extent_true, extent_pred, boundary_pred, result_dir, \
-                      dummy_gt, dummy_proj, intermediate_path, border_limit=10, intermediate=True):
-    print(f'Starting on tile {tile}')
+def get_IoUs_per_Tile(row_col_start, extent_true, extent_pred, boundary_pred, result_dir, \
+                      dummy_gt, dummy_proj, intermediate_path, intermediate=True):
+    
+    print(f'Starting on tile {row_col_start} for {result_dir}')
     # make a dictionary for export
-    k = ['tile','t_ext','t_bound', 'max_IoU', 'centroid_IoU', 'centroid_row', 'centroid_col',\
-          'reference_field_IDs', 'reference_field_sizes'] #'medianIoU', 'meanIoU', 'IoU_50', 'IoU_80']
+    k = ['row_col_start','t_ext','t_bound', 'max_IoU', 'centroid_IoU', 'centroid_row', 'centroid_col',\
+          'centroid_IDs', 'reference_field_IDs', 'reference_field_sizes', 'intersect_IDs', 'intersect_area'] #'medianIoU', 'meanIoU', 'IoU_50', 'IoU_80']
     v = [list() for i in range(len(k))]
     res = dict(zip(k, v))
 
@@ -1184,27 +1185,30 @@ def get_IoUs_per_Tile(tile, row_col_start, extent_true, extent_pred, boundary_pr
         for t_bound in t_bounds:
             #print('thresholds: ' + str(t_ext) + ', ' +str(t_bound))
 
-            img_IoUs, centroid_IoUS, centroid_rows, centroid_cols, field_IDs, field_sizes = \
+            img_IoUs, centroid_IoUS, centroid_rows, centroid_cols, centroid_IDs, field_IDs, field_sizes , intersect_IDS, intersect_area = \
                 get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext, t_bound, dummy_gt, \
-                         dummy_proj, intermediate_path, border_limit=border_limit, intermediate=intermediate)
+                         dummy_proj, intermediate_path, intermediate=intermediate)
             
             for e, IoUs in enumerate(img_IoUs):
     
-                res['tile'].append(tile)
+                res['row_col_start'].append(row_col_start)
                 res['t_ext'].append(t_ext)
                 res['t_bound'].append(t_bound)
                 res['max_IoU'].append(IoUs)
                 res['centroid_IoU'].append(centroid_IoUS[e])
                 res['centroid_row'].append(centroid_rows[e])
                 res['centroid_col'].append(centroid_cols[e])
+                res['centroid_IDs'].append(centroid_IDs[e])
                 res['reference_field_IDs'].append(field_IDs[e])
                 res['reference_field_sizes'].append(field_sizes[e])
+                res['intersect_IDs'].append(intersect_IDS[e])
+                res['intersect_area'].append(intersect_area[e])
     
     # export results
     df  = pd.DataFrame(data = res)
-    df.to_csv(f'{result_dir}/{tile}_IoU_hyperparameter_tuning.csv', index=False)
+    df.to_csv(f'{result_dir}/{row_col_start}_IoU_hyperparameter_tuning.csv', index=False)
 
-    print(f'Finished tile {tile}')
+    print(f'Finished tile {row_col_start}')
 
 #####################################################################################
 #####################################################################################
@@ -1526,7 +1530,7 @@ def stackReader(path_to_stack, bands=False, era=False):
 
     Args:
         path_to_stack (str): path to the stack.tif
-        bands (bool): If True, a list with band names of stack wil be returned as well. WORKS ONLY IF BAND NAMES ARE grepable by GetDescription()
+        bands (bool): If True, a list with band names of stack wil be returned as well. (WORKS ONLY WITH ERA5.grib files for now!!!!)
         era (bool): If bands True and era True, the bands metadata is extracted in a different manner
     """
     conti = []
@@ -1534,21 +1538,32 @@ def stackReader(path_to_stack, bands=False, era=False):
         ds = gdal.Open(path_to_stack)
     else:
         ds = path_to_stack
+    ds = checkPath(path_to_stack)
+    bandCount = ds.RasterCount
     if bands:
         bandsL = []
-        for b in range(ds.RasterCount):
-            conti.append(ds.GetRasterBand(b+1).ReadAsArray())
+        if bandCount > 1:
+            for b in range(bandCount):
+                conti.append(ds.GetRasterBand(b+1).ReadAsArray())
+                if not era:
+                    bandsL.append(ds.GetRasterBand(b+1).GetDescription())
+                else:
+                    bandsL.append(datetime.fromtimestamp(int(ds.GetRasterBand(b+1).GetMetadata()['GRIB_VALID_TIME']), tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S'))
+            return np.dstack(conti), bandsL
+        else:
+            conti.append(ds.GetRasterBand(1).ReadAsArray())
             if not era:
-                bandsL.append(ds.GetRasterBand(b+1).GetDescription())
+                bandsL.append(ds.GetRasterBand(1).GetDescription())
             else:
-                bandsL.append(datetime.fromtimestamp(int(ds.GetRasterBand(b+1).GetMetadata()['GRIB_VALID_TIME']), tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S'))
-        return np.dstack(conti), bandsL
-    
-    
+                bandsL.append(datetime.fromtimestamp(int(ds.GetRasterBand(1).GetMetadata()['GRIB_VALID_TIME']), tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S'))
+            return np.dstack(conti), bandsL
     else:
-        for b in range(ds.RasterCount):
-            conti.append(ds.GetRasterBand(b+1).ReadAsArray())
-        return np.dstack(conti)
+        if bandCount > 1:
+            for b in range(bandCount):
+                conti.append(ds.GetRasterBand(b+1).ReadAsArray())
+            return np.dstack(conti)
+        else:
+            return ds.GetRasterBand(1).ReadAsArray()
 
 def stack_tifs(input_tif_list, output_tif=False):
     # Open the first raster to get geotransform, projection, and shape
