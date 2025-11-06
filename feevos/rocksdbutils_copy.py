@@ -7,6 +7,7 @@ if sys.version_info < (3, 8):
 else:
     import pickle as mypickler
 
+sys.path.append('/media/helperToolz/')
 
 from feevos.xlogger import *  # Necessary for saving keys 
 import os 

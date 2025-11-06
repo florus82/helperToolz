@@ -1565,7 +1565,7 @@ def stackReader(path_to_stack, bands=False, era=False):
         else:
             return ds.GetRasterBand(1).ReadAsArray()
 
-def stack_tifs(input_tif_list, output_tif=False):
+def stack_tifs(input_tif_list, output_tif=False, d_type=False):
     # Open the first raster to get geotransform, projection, and shape
     if type(input_tif_list) != osgeo.gdal.Dataset:
         src0 = gdal.Open(input_tif_list[0])
@@ -1575,7 +1575,10 @@ def stack_tifs(input_tif_list, output_tif=False):
     y_size = src0.RasterYSize
     proj = src0.GetProjection()
     geotrans = src0.GetGeoTransform()
-    dtype = src0.GetRasterBand(1).DataType
+    if d_type:
+        dtype = d_type
+    else:
+        dtype = src0.GetRasterBand(1).DataType
     num_bands = len(input_tif_list)
 
     # Create output multi-band raster

@@ -1,28 +1,79 @@
 import cv2
 import glob
 import geopandas as gpd
+import pandas as pd
 import numpy as np
 from osgeo import gdal, ogr, osr
 import matplotlib.pyplot as plt
 import os
 
+
+EXCLUDE_LIST = ['',
+ '(Beta-)Rübensamenvermehrung',
+ 'Alle anderen Flächen (keine LF)',
+ 'Baumschulen, nicht für Beerenobst',
+ 'Bestockte Rebfläche',
+ 'Erosionsschutzstreifen',
+ 'Forstflächen (Waldbodenflächen)',
+ 'Gewässerschutzstreifen',
+ 'Grassamenvermehrung',
+ 'Haus- und Nutzgärten',
+ 'KUP lt. Direktzahlungendurchführungsverordnung',
+ 'KUP lt. Direktzahlungendurchführungsverordnung (keine ÖVF)',
+ 'KUP lt. GAPDZV',
+ 'N. LNF, n. Art. 32(2b(i)) der VO(EG) Nr.1307/2013 beihilfef. Fl.',
+ 'Nicht landwirt. Fl. In der Verfügungsgewalt des Antragstellers, die gem. § 15 (1) DirektZahlDurchfG als umweltsensibles Dauergrünland bestimmt worden sind',
+ 'Nicht landwirt. Fl. infolge Genehmigung DGL Umwandlung',
+ 'Nicht landwirtschaftliche, aber nach Art. 32(2b (i)) der VO (EG) Nr. 1307/2013 beihilfefähige Fläche',
+ 'Nicht landwirtschaftliche, aber nach Art. 32(2b (i)) der VO (EG) Nr. 1307/2013 beihilfefähige Fläche (Naturschutzflächen, die 2008 noch beihilfefähig waren)',
+ 'Nicht landwirtschaftliche, aber nach §11 (1) Nr.3 Bst. a) bb) der GAPDZV förderfähige Fläche (Infolge Anwendung der Wasserrahmenrichtlinie)',
+ 'Nicht landwirtschaftliche, aber §11 (1) Nr.3 Bst. c) der GAPDZV förderfähige Fläche (Aufforstungsverpflichtung nach VO 1257/1999 oder VO (EG) Nr. 1698/2005 oder VO 1305/2013 oder VO 2021/2115 oder bei Eingehung damit in Einklang stehender öffentlich',
+ 'None',
+ 'Pufferstreifen ÖVF DGL',
+ 'Schonstreifen',
+ 'Streifen am Waldrand (ohne Produktion) ÖVF',
+ 'Ufervegetation ÖVF',
+ 'Unbefestigte Mieten-, Stroh-, Futter und Dunglagerplätze auf AL',
+ 'Unbefestigte Mieten-, Stroh-, Futter und Dunglagerplätze auf DGL',
+ 'Unbestockte Rebfläche',
+ 'Vorübergehende, unbefestigte Mieten-, Stroh-, Futter und Dunglagerplätze auf AL',
+ 'Vorübergehende, unbefestigte Mieten-, Stroh-, Futter und Dunglagerplätze auf DGL',
+ 'Weihnachtsbäume',
+ 'Wildäsungsfläche',
+ 'afforestation_reforestation',
+ 'alle anderen Flächen (keine LF)',
+ 'aufgeforstete Dauergrünlandflächen, weder nach 1257/99 oder VO (EG) Nr. 1698/2005  1305/2013oder VO (EU) Nr.1305/2013',
+ 'aufgeforstete Flächen (VO1257/1999, 1698/2005, 1305/2013)',
+ 'greenhouse_foil_film',
+ 'nach VO 1257/1999 oder VO (EG) Nr. 1698/2005 oder VO 1305/2013 aufgeforstete Flächen',
+ 'not_known_and_other',
+ 'nurseries_nursery',
+ 'tree_wood_forest',
+ 'unmaintained',
+ 'vorübergehend unbefestigte Mieten-, Stroh-, Futter oder Dunglagerplätze auf DGL',
+ 'vorübergehende, unbefestigte Mieten-, Stroh-, Futter oder Dunglagerplätze auf AL']
+
+
 # 00_polygons_to_lines.py
-def polygons_to_lines(path_to_polygon, path_to_lines_out, categories=None):
+def polygons_to_lines(path_to_polygon, path_to_lines_out, categories=None, category_col=None):
     
     if not os.path.exists(path_to_lines_out):
         # Load the GeoParquet file
-        gdf = gpd.read_parquet(path_to_polygon)
+        gdf = gpd.read_file(path_to_polygon)
 
-        # Ensure the geometries are polygons
-        if not all(gdf.geometry.type.isin(['Polygon', 'MultiPolygon'])):
-            raise ValueError('The file must contain Polygon or MultiPolygon geometries.')
+        # # Ensure the geometries are polygons
+        # if not all(gdf.geometry.type.isin(['Polygon', 'MultiPolygon'])):
+        #     raise ValueError('The file must contain Polygon or MultiPolygon geometries.')
 
         # Exclude specified categories if provided
         if categories is not None:
-            initial_count = len(gdf)
-            gdf = gdf[~gdf['EC_hcat_n'].isin(categories)]
-            filtered_count = initial_count - len(gdf)
-            print(f"Filtered out {filtered_count} rows from {initial_count} based on categories")
+            if category_col is None:
+                raise ValueError('No column provided to apply excluding values to')
+            else:
+                initial_count = len(gdf)
+                gdf = gdf[~gdf[category_col].isin(categories)]
+                filtered_count = initial_count - len(gdf)
+                print(f"Filtered out {filtered_count} rows from {initial_count} based on categories")
 
         # Convert polygons to lines
         gdf['geometry'] = gdf.geometry.boundary
@@ -37,11 +88,11 @@ def polygons_to_lines(path_to_polygon, path_to_lines_out, categories=None):
 # 01_rasterize_line_feats
 def rasterize_lines(path_to_lines, path_to_extent_raster, path_to_rasterlines_out, all_touch=True):
 
-    ##### open field vector file
-    field = ogr.Open(path_to_lines)
-    field_lyr = field.GetLayer(0)
-
     if not os.path.exists(path_to_rasterlines_out):
+        ##### open field vector file
+        field = ogr.Open(path_to_lines)
+        field_lyr = field.GetLayer(0)
+
         ds = gdal.Open(path_to_extent_raster)
         target_ds = gdal.GetDriverByName('GTiff').Create(path_to_rasterlines_out, ds.RasterXSize, ds.RasterYSize, 1, gdal.GDT_Byte)
         target_ds.SetGeoTransform(ds.GetGeoTransform())
@@ -76,69 +127,156 @@ def make_multitask_labels(path_to_rasterlines, path_to_mtsk_out):
     copy_mem_ds(path_to_mtsk_out, mem_ds)
 
 # 03 create a crop mask
-def make_crop_mask(path_to_polygon, path_to_rasterized_lines, path_to_extent_raster, path_to_mask_out, all_touch=True):
-    #### open field vector file
-    field_gpd = gpd.read_parquet(path_to_polygon)
-
-    # convert field_gpd to vector layer for rasterization
-    ogr_ds = ogr.GetDriverByName('Memory').CreateDataSource('')
-    srs = ogr.osr.SpatialReference()
-    srs.ImportFromWkt(field_gpd.crs.to_wkt())
-    field_lyr = ogr_ds.CreateLayer("field_layer", srs, ogr.wkbPolygon)
-
-    # Convert geometries
-    layer_defn = field_lyr.GetLayerDefn()
-    for _, row in field_gpd.iterrows():
-        feature = ogr.Feature(layer_defn)
-
-        # Validate geometry
-        if row.geometry is None or row.geometry.is_empty:
-            print("Skipping empty geometry.")
-            continue
-
-        # Convert to OGR geometry
-        geom = ogr.CreateGeometryFromWkb(row.geometry.wkb)
-        if geom is None:
-            print("Invalid geometry encountered, skipping.")
-            continue
-
-        feature.SetGeometry(geom)
-        field_lyr.CreateFeature(feature)
-        feature = None  # Free memory
-
+def make_crop_mask(path_to_polygon, path_to_extent_raster, path_to_mask_out, path_to_rasterized_lines=False,\
+                   all_touch=True, categories=None, category_col=None, burn_col = False):
+    
     if not os.path.exists(path_to_mask_out):
+        #### open field vector file
+        field_gpd = gpd.read_file(path_to_polygon)
+
+        # Exclude specified categories if provided
+        if categories is not None:
+            if category_col is None:
+                raise ValueError('No column provided to apply excluding values to')
+            else:
+                initial_count = len(field_gpd)
+                field_gpd = field_gpd[~field_gpd[category_col].isin(categories)]
+                filtered_count = initial_count - len(field_gpd)
+                print(f"Filtered out {filtered_count} rows from {initial_count} based on categories")
+
+        # convert field_gpd to vector layer for rasterization
+        ogr_ds = ogr.GetDriverByName('Memory').CreateDataSource('')
+        srs = ogr.osr.SpatialReference()
+        srs.ImportFromWkt(field_gpd.crs.to_wkt())
+        field_lyr = ogr_ds.CreateLayer("field_layer", srs, ogr.wkbPolygon)
+        
+        if burn_col:
+            # Create fields (attributes) in the OGR layer 
+            for col_name, dtype in zip(field_gpd.columns, field_gpd.dtypes):
+                if col_name == field_gpd.geometry.name:
+                    continue  # skip geometry column
+
+                if np.issubdtype(dtype, np.integer):
+                    field_type = ogr.OFTInteger64
+                elif np.issubdtype(dtype, np.floating):
+                    field_type = ogr.OFTReal
+                else:
+                    field_type = ogr.OFTString
+
+                field_defn = ogr.FieldDefn(col_name, field_type)
+                field_lyr.CreateField(field_defn)
+    
+        # Convert geometries
+        layer_defn = field_lyr.GetLayerDefn()
+        for _, row in field_gpd.iterrows():
+        
+            # Validate geometry
+            if row.geometry is None or row.geometry.is_empty:
+                print("Skipping empty geometry.")
+                continue
+
+            # Convert to OGR geometry
+            geom = ogr.CreateGeometryFromWkb(row.geometry.wkb)
+            if geom is None:
+                print("Invalid geometry encountered, skipping.")
+                continue
+
+            feature = ogr.Feature(layer_defn)
+            feature.SetGeometry(geom)
+
+            if burn_col:
+                # Set attribute values
+                for col_name in field_gpd.columns:
+                    if col_name != field_gpd.geometry.name:
+                        value = row[col_name]
+                        if pd.notnull(value):
+                            feature.SetField(col_name, value)
+            field_lyr.CreateFeature(feature)
+            feature = None  # Free memory
+
+        if burn_col:
+            export_dt = gdal.GDT_UInt32
+        else:
+            export_dt = gdal.GDT_Byte
         ds = gdal.Open(path_to_extent_raster)
-        target_ds = gdal.GetDriverByName('GTiff').Create(path_to_mask_out, ds.RasterXSize, ds.RasterYSize, 1, gdal.GDT_Byte)
+        target_ds = gdal.GetDriverByName('GTiff').Create(path_to_mask_out, ds.RasterXSize, ds.RasterYSize, 1, export_dt)
         target_ds.SetGeoTransform(ds.GetGeoTransform())
         target_ds.SetProjection(ds.GetProjection())
+        band = target_ds.GetRasterBand(1)
+        band.SetNoDataValue(0)
+        band.Fill(0)
 
         # this choice appears to have no effect when rasterizing the polygons
         if all_touch:
             opti = ["ALL_TOUCHED=TRUE"]
         else:
             opti = ["ALL_TOUCHED=FALSE"]
-        gdal.RasterizeLayer(target_ds, [1], field_lyr, burn_values=[1], options = opti)
+
+        if burn_col:
+            opti.append(f"ATTRIBUTE={burn_col}")
+            gdal.RasterizeLayer(target_ds, [1], field_lyr, options = opti)
+        else:
+            gdal.RasterizeLayer(target_ds, [1], field_lyr, burn_values=[1], options = opti)
         target_ds = None
     else:
         print(f'Mask for {path_to_polygon} already exists!!!')
 
     # mask the output with rasterized lines to clean up
-    path_linecrop_out = path_to_mask_out.split('.')[0] + '_linecrop.tif' # + '_lines_touch_' + path_to_rasterized_lines.split('_')[-1].split('.')[0]
-    if not os.path.exists(path_linecrop_out):
-        mask_ds = gdal.Open(path_to_mask_out)
-        mask = mask_ds.GetRasterBand(1).ReadAsArray()
-        lines_ds  = gdal.Open(path_to_rasterized_lines)
-        lines = lines_ds.GetRasterBand(1).ReadAsArray()
-        
-        mask[np.where(lines == 1)] = 0
+    if path_to_rasterized_lines:
+        path_linecrop_out = path_to_mask_out.split('.')[0] + '_linecrop.tif' # + '_lines_touch_' + path_to_rasterized_lines.split('_')[-1].split('.')[0]
+        if not os.path.exists(path_linecrop_out):
+            mask_ds = gdal.Open(path_to_mask_out)
+            mask = mask_ds.GetRasterBand(1).ReadAsArray()
+            lines_ds  = gdal.Open(path_to_rasterized_lines)
+            lines = lines_ds.GetRasterBand(1).ReadAsArray()
+            
+            mask[np.where(lines == 1)] = 0
 
-        target_ds = gdal.GetDriverByName('GTiff').Create(path_linecrop_out, mask_ds.RasterXSize, mask_ds.RasterYSize, 1, gdal.GDT_Byte)
-        target_ds.SetGeoTransform(mask_ds.GetGeoTransform())
-        target_ds.SetProjection(mask_ds.GetProjection())
-        target_ds.GetRasterBand(1).WriteArray(mask)
-        del target_ds
+            target_ds = gdal.GetDriverByName('GTiff').Create(path_linecrop_out, mask_ds.RasterXSize, mask_ds.RasterYSize, 1, gdal.GDT_Byte)
+            target_ds.SetGeoTransform(mask_ds.GetGeoTransform())
+            target_ds.SetProjection(mask_ds.GetProjection())
+            target_ds.GetRasterBand(1).WriteArray(mask)
+            del target_ds
+        else:
+            print(f'Mask for {path_to_polygon} in combination with {path_to_rasterized_lines} already exists!!!')
     else:
-        print(f'Mask for {path_to_polygon} in combination with {path_to_rasterized_lines} already exists!!!')
+        pass
+
+
+def get_distance_raster(path_to_object, outPath):
+    """Create a distance raster from a binary raster (distance to value 1)
+
+    Args:
+        path_to_object (str): path to binary raster
+        outPath (str): path to output.tif on disc where distance raster will be stored
+    """
+    if not os.path.exists(outPath):
+        # Open the input
+        src_ds = gdal.Open(path_to_object)
+        # Create output raster
+        driver = gdal.GetDriverByName('GTiff')
+        dst_ds = driver.Create(
+            outPath,
+            src_ds.RasterXSize,
+            src_ds.RasterYSize,
+            1,
+            gdal.GDT_Float32
+        )
+        dst_ds.SetGeoTransform(src_ds.GetGeoTransform())
+        dst_ds.SetProjection(src_ds.GetProjection())
+
+        # Compute distance raster
+        gdal.ComputeProximity(
+            src_ds.GetRasterBand(1),
+            dst_ds.GetRasterBand(1),
+            options=["VALUES=1", "DISTUNITS=GEO"]
+        )
+
+        dst_ds = None
+
+        print(f'Distance raster for {path_to_object} created')
+    else:
+        print(f'distance raster for {path_to_object} already exists!!!')
 
 ###########################
 ####### helper functions
