@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from osgeo import gdal
 import matplotlib.pyplot as plt
+import geopandas as gpd
 #import higra as hg
 import os
 import xarray as xr 
@@ -868,7 +869,7 @@ def force_to_vrt(list_of_forcefiles, ordered_forcetiles, vrt_out_path, pyramids=
 
         # set optionally bandnames    
         if bandnames:
-            for idz, bname in enumerate(bandnames): 
+            for idz, bname in enumerate(np.repeat(bandnames,int(len(ordered_forcetiles) / len(bandnames))).tolist()):  
                 print(f'{outDir}{force_folder_name}_{str(idz)}.vrt')
                 vrt = gdal.Open(f'{outDir}{force_folder_name}_{str(idz)}.vrt', gdal.GA_Update)  # VRT must be writable
                 band = vrt.GetRasterBand(1)
@@ -885,7 +886,7 @@ def force_to_vrt(list_of_forcefiles, ordered_forcetiles, vrt_out_path, pyramids=
         if bandnames:
             # set vrt band names
             vrt = gdal.Open(f'{outDir}{force_folder_name}_Cube.vrt', gdal.GA_Update)  # VRT must be writable
-            for idz, bname in enumerate(bandnames): 
+            for idz, bname in enumerate(np.repeat(bandnames,int(len(ordered_forcetiles) / len(bandnames))).tolist()): 
                 band = vrt.GetRasterBand(1+idz)
                 band.SetDescription(bname)
             vrt = None
@@ -1717,11 +1718,17 @@ def path_safe(path):
     Args:
         path (str): path to file (or directory)
     """
-    if os.path.isdir(os.path.dirname(path)):
-        return path
+    if os.path.splitext(path)[1]: # checks if path points to a file
+            dir_path = os.path.dirname(path)
     else:
-        os.makedirs(os.path.dirname(path))
+        dir_path = path  # treat as directory
+
+    if dir_path == "":
+        print('this is not a path!!!')
         return path
+
+    os.makedirs(dir_path, exist_ok=True)
+    return path
 
 def dirfinder(path):
     """ returns a list with all directory names within a folder
@@ -1734,3 +1741,12 @@ def dirfinder(path):
     """
     return [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
 
+def getAttributesALL(path_to_vector):
+    """
+    Returns a dictionary of all attributes (fields) and their values
+    from a path to a .shp, gpkg, .parquet ...
+    """
+
+    gdf = gpd.read_file(path_to_vector)
+
+    return {col: gdf[col].tolist() for col in gdf.columns if col != 'geometry'}

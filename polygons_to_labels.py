@@ -6,7 +6,8 @@ import numpy as np
 from osgeo import gdal, ogr, osr
 import matplotlib.pyplot as plt
 import os
-
+import rasterio
+from scipy import ndimage
 
 EXCLUDE_LIST = ['',
  '(Beta-)Rübensamenvermehrung',
@@ -58,27 +59,35 @@ EXCLUDE_LIST = ['',
 def polygons_to_lines(path_to_polygon, path_to_lines_out, categories=None, category_col=None):
     
     if not os.path.exists(path_to_lines_out):
-        # Load the GeoParquet file
+        # Load polygons
         gdf = gpd.read_file(path_to_polygon)
-
-        # # Ensure the geometries are polygons
-        # if not all(gdf.geometry.type.isin(['Polygon', 'MultiPolygon'])):
-        #     raise ValueError('The file must contain Polygon or MultiPolygon geometries.')
-
-        # Exclude specified categories if provided
-        if categories is not None:
-            if category_col is None:
-                raise ValueError('No column provided to apply excluding values to')
-            else:
-                initial_count = len(gdf)
-                gdf = gdf[~gdf[category_col].isin(categories)]
-                filtered_count = initial_count - len(gdf)
-                print(f"Filtered out {filtered_count} rows from {initial_count} based on categories")
-
+        
+        # Filter categories if provided
+        if categories is not None and category_col is not None:
+            gdf = gdf[~gdf[category_col].isin(categories)]
+        
+        # Keep only valid geometries
+        gdf = gdf[gdf.is_valid]
+        
+        # Drop duplicate geometries
+        gdf = gdf.drop_duplicates(subset='geometry')
+        
         # Convert polygons to lines
         gdf['geometry'] = gdf.geometry.boundary
-        #export
-        gdf.to_file(path_to_lines_out, driver='GPKG')  
+        
+        # Drop any existing 'fid' column to avoid UNIQUE constraint
+        if 'fid' in gdf.columns:
+            gdf = gdf.drop(columns=['fid'])
+        
+        # Reset index to ensure unique IDs
+        gdf = gdf.reset_index(drop=True)
+        
+        # Construct layer name
+        layer_name = path_to_polygon.split('/')[-1].split('.')[0]
+        
+        # Save to GeoPackage using Fiona backend (safer for new layers)
+        gdf.to_file(path_to_lines_out, driver='GPKG', layer=layer_name)
+        
 
         print("Conversion complete: Polygons converted to lines.")
     else:
@@ -133,16 +142,17 @@ def make_crop_mask(path_to_polygon, path_to_extent_raster, path_to_mask_out, pat
     if not os.path.exists(path_to_mask_out):
         #### open field vector file
         field_gpd = gpd.read_file(path_to_polygon)
-
+        if burn_col== 'id_0':
+            field_gpd = field_gpd.reset_index(drop=False).rename(columns={'index': 'id_0'})
         # Exclude specified categories if provided
-        if categories is not None:
-            if category_col is None:
-                raise ValueError('No column provided to apply excluding values to')
-            else:
-                initial_count = len(field_gpd)
-                field_gpd = field_gpd[~field_gpd[category_col].isin(categories)]
-                filtered_count = initial_count - len(field_gpd)
-                print(f"Filtered out {filtered_count} rows from {initial_count} based on categories")
+        if categories is not None and category_col is not None:
+            field_gpd = field_gpd[~field_gpd[category_col].isin(categories)]
+
+        # Keep only valid geometries
+        field_gpd = field_gpd[field_gpd.is_valid]
+        
+        # Drop duplicate geometries
+        field_gpd = field_gpd.drop_duplicates(subset='geometry')
 
         # convert field_gpd to vector layer for rasterization
         ogr_ds = ogr.GetDriverByName('Memory').CreateDataSource('')
@@ -241,6 +251,77 @@ def make_crop_mask(path_to_polygon, path_to_extent_raster, path_to_mask_out, pat
             print(f'Mask for {path_to_polygon} in combination with {path_to_rasterized_lines} already exists!!!')
     else:
         pass
+
+
+def get_fieldborder_distance_raster(path_to_object, outPath):
+    """Create a distance raster from a binary raster (distance to fieldborder which has value 1)
+        The distance values are cropped to the inside of fields
+    Args:
+        path_to_object (str): path to binary raster
+        outPath (str): path to output.tif on disc where distance raster will be stored
+    """
+
+    with rasterio.open(path_to_object) as src:
+        border = src.read(1)
+        profile = src.profile
+
+    # Invert border: 1 inside polygon, 0 on border
+    polygon_mask = border
+
+    # Compute Euclidean distance to border (border pixels = 0)
+    distance = ndimage.distance_transform_edt(polygon_mask)
+
+    # Mask outside polygons (if needed, e.g., if border raster has extra 0s)
+    distance[polygon_mask == 0] = 0
+
+    # Normalize distances inside polygons
+    max_dist = distance.max()
+    distance_scaled = np.zeros_like(distance, dtype=np.float32)
+    if max_dist > 0:
+        distance_scaled[distance > 0] = distance[distance > 0] / max_dist
+
+    # Save raster
+    profile.update(dtype=rasterio.float32, count=1)
+    with rasterio.open(outPath, "w", **profile) as dst:
+        dst.write(distance_scaled, 1)
+
+    # from scipy.ndimage import distance_transform_edt, maximum
+    # with rasterio.open(path_to_object) as src:
+    #     arr = src.read(1)
+    #     profile = src.profile
+
+    # # Initialize normalized distance array
+    # dist_norm = np.zeros_like(arr, dtype=np.float32)
+
+    # # Mask of all field pixels
+    # field_mask = arr != 0
+
+    # # Compute distance to nearest background pixel (0)
+    # # distance_transform_edt calculates distance to 0 pixels
+    # dist_all = distance_transform_edt(field_mask)
+
+    # # Assign distance only to field pixels
+    # dist_norm[field_mask] = dist_all[field_mask]
+
+    # # Normalize per polygon using scipy.ndimage.maximum
+    # unique_ids = np.unique(arr)
+    # unique_ids = unique_ids[unique_ids != 0]  # skip background
+
+    # # Compute max distance per polygon
+    # max_dist_per_id = maximum(dist_norm, labels=arr, index=unique_ids)
+
+    # # Create a mapping from polygon ID -> max distance
+    # max_dict = dict(zip(unique_ids, max_dist_per_id))
+
+    # # Normalize distances per polygon
+    # vectorized_norm = np.zeros_like(dist_norm, dtype=np.float32)
+    # for fid, max_val in max_dict.items():
+    #     if max_val > 0:
+    #         vectorized_norm[arr == fid] = dist_norm[arr == fid] / max_val
+
+    # # Save normalized distance raster
+    # with rasterio.open(outPath, 'w', **profile) as dst:
+    #     dst.write(vectorized_norm, 1)
 
 
 def get_distance_raster(path_to_object, outPath):
