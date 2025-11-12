@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from skimage import measure
 import io
 import contextlib
-
+import shutil
 import sys
 sys.path.append('/media/')
 from helperToolz.helper import *
@@ -899,7 +899,7 @@ def force_to_vrt(list_of_forcefiles, ordered_forcetiles, vrt_out_path, pyramids=
     else:
         print('Vrt might already exist - please check!!')
 
-def loadVRTintoNumpyAI4(vrtPath):
+def loadVRTintoNumpyAI4(vrtPath, applyNormalizer=True):
     '''vrtPath: path in which vrts are stored
         vrts will be loaded into numpy array and normalized (for Sentinel-2 10m bands!!!!!)'''
     vrtFiles = [file for file in getFilelist(vrtPath, '.vrt') if 'Cube' not in file]
@@ -914,7 +914,10 @@ def loadVRTintoNumpyAI4(vrtPath):
     data_cube = np.transpose(cube, (2, 0, 1))
     reshaped_cube = data_cube.reshape(4, 6, ds.RasterYSize, ds.RasterXSize)
     normalizer = AI4BNormal_S2()
-    return normalizer(reshaped_cube)
+    if applyNormalizer:
+        return normalizer(reshaped_cube)
+    else:
+        return reshaped_cube
 
 #####################################################################################
 #####################################################################################
@@ -1064,7 +1067,7 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
     # get predicted instance segmentation
     instances_pred = InstSegm(extent_pred, boundary_pred, t_ext=t_ext, t_bound=t_bound)
     instances_pred = measure.label(instances_pred, background=-1) 
-    if intermediate and row_col_start == '10760_17982':
+    if intermediate:# and row_col_start == '10760_17982':
             export_intermediate_products(row_col_start, instances_pred, dummy_gt, dummy_proj,\
                                         intermediate_path, filename=f'{t_ext}_{t_bound}_instance_pred_{row_col_start}.tif', noData=0)
 
@@ -1072,7 +1075,7 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
     # binary_true = extent_true > 0
     # instances_true = measure.label(binary_true, background=0, connectivity=1)
     instances_true = extent_true
-    if intermediate and row_col_start == '10760_17982':
+    if intermediate:# and row_col_start == '10760_17982':
             export_intermediate_products(row_col_start, instances_true, dummy_gt, dummy_proj,\
                                         intermediate_path, filename=f'{t_ext}_{t_bound}_instance_true_{row_col_start}.tif', noData=0)
 
@@ -1150,7 +1153,7 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
     
 
     # export centroids and intersecting fields with best IoUs
-    if intermediate and row_col_start == '10760_17982':
+    if intermediate:# and row_col_start == '10760_17982':
 
             # Create mask of intersecting fields with best IoUs
             intersect_mask = np.isin(instances_pred, centroid_IDs)# intersectL)
@@ -1168,7 +1171,7 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
 ########## main-function
 
 def get_IoUs_per_Tile(row_col_start, extent_true, extent_pred, boundary_pred, result_dir, \
-                      dummy_gt, dummy_proj, intermediate_path, intermediate=True):
+                      dummy_gt, dummy_proj, intermediate_path, intermediate=True, t_ext=False, t_bound=False):
     
     print(f'Starting on tile {row_col_start} for {result_dir}')
     # make a dictionary for export
@@ -1178,9 +1181,16 @@ def get_IoUs_per_Tile(row_col_start, extent_true, extent_pred, boundary_pred, re
     res = dict(zip(k, v))
 
     # set the parameter combinations and test combinations
-    t_exts = [i/100 for i in range(10,95,5)] 
-    t_bounds = [i/100 for i in range(10,95,5)]
-
+    if not t_ext:
+        t_exts = [i/100 for i in range(10,95,5)] 
+        t_bounds = [i/100 for i in range(10,95,5)]
+    else:
+        if isinstance(t_ext, list):
+            t_exts = t_ext
+            t_bounds = t_bound
+        else:
+            t_exts = [t_ext]
+            t_bounds = [t_bound]
     # loop over parameter combinations
     for t_ext in t_exts:
         for t_bound in t_bounds:
@@ -1750,3 +1760,24 @@ def getAttributesALL(path_to_vector):
     gdf = gpd.read_file(path_to_vector)
 
     return {col: gdf[col].tolist() for col in gdf.columns if col != 'geometry'}
+
+def clear_directory(path):
+    """
+    Delete all files and folders inside path, but keep the directory itself.
+    """
+
+    confirm = input(f"Are you sure you want to delete everythin @ '{path}'? (y/N): ").strip().lower()
+    if confirm not in ("y", "yes"):
+        print("Operation cancelled.")
+        return
+    for filename in os.listdir(path):
+        file_path = os.path.join(path, filename)
+        try:
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                # Delete files or symlinks
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                # Recursively delete directories
+                shutil.rmtree(file_path)
+        except Exception as e:
+            print(f"Failed to delete {file_path}. Reason: {e}")
