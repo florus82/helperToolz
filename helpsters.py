@@ -1634,14 +1634,14 @@ def npTOdisk(arr, reference_path, outPath, bands = False, bandnames = False, noD
         out_ds.GetRasterBand(1).WriteArray(arr)
         if bandnames:
             out_ds.GetRasterBand(1).SetDescription(bandnames)
-        if noData:
+        if noData is not False:
             out_ds.GetRasterBand(1).SetNoDataValue(noData)
     else:
         for i in range(bands):
             out_ds.GetRasterBand(i+1).WriteArray(arr[:,:,i])
             if bandnames:
                 out_ds.GetRasterBand(i+1).SetDescription(str(bandnames[i]))
-            if noData:
+            if noData is not False:
                 out_ds.GetRasterBand(i+1).SetNoDataValue(noData)
     out_ds.FlushCache()
 
