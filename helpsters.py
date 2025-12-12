@@ -34,7 +34,7 @@ class AI4BNormal_S2(object):
     """
     def __init__(self):
 
-        self._mean_s2 = np.array([5.4418573e+02, 7.6761194e+02, 7.1712860e+02, 2.8561428e+03 ]).astype(np.float32) 
+        self._mean_s2 = np.array([5.4418573e+02, 7.6761194e+02, 7.1712860e+02, 2.8561428e+03]).astype(np.float32) 
         self._std_s2  = np.array( [3.7141626e+02, 3.8981952e+02, 4.7989127e+02 ,9.5173022e+02]).astype(np.float32) 
 
     def __call__(self,img):
@@ -1085,7 +1085,8 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
     best_IoUs = []
     field_IDs = []
     field_sizes = []
-    pred_field_overlap = []
+    ratio_field_overlap_pred = []
+    ratio_field_overlap_true = []
     centroid_rows = []
     centroid_cols = []
     centroid_IoUS = []
@@ -1099,7 +1100,6 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
         this_field = instances_true == field_value # makes a binary raster for the respective sampled IACS poylgon
         this_field_centroid = np.mean(np.column_stack(np.where(this_field)),axis=0).astype(int) # calculates the centroid of that polygon
         
-
         # fill lists with info
         centroid_rows.append(this_field_centroid[0])
         centroid_cols.append(this_field_centroid[1])
@@ -1112,14 +1112,16 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
   
         # compute IoU for each intersecting field
         field_IoUs = []
-        intersect_area = []
+        intersect_area_pred = []
+        intersect_area_true = []
         centroid_IoU = 0
         centroid_ID = 0
 
         for intersect_value in intersect_values:
             if intersect_value == 0:
                 field_IoUs.append(0)
-                intersect_area.append(0)
+                intersect_area_pred.append(0)
+                intersect_area_true.append(0)
                 continue # move on to next value
             
             pred_field = instances_pred == intersect_value # makes a binary raster of of intersecting predicted field
@@ -1130,7 +1132,8 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
             intersection = (this_field * pred_field) > 0
             IoU = np.sum(intersection) / np.sum(union)
             field_IoUs.append(IoU)
-            intersect_area.append(np.sum(intersection) / pred_field_area)
+            intersect_area_pred.append(np.sum(intersection) / pred_field_area)
+            intersect_area_true.append(np.sum(intersection) / np.sum(this_field))
 
             # check for centroid condition
             if instances_pred[this_field_centroid[0], this_field_centroid[1]] == intersect_value:
@@ -1140,11 +1143,13 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
         # take maximum IoU - this is the IoU for this true field
         if len(field_IoUs) > 1 or field_IoUs[0] != 0:
             best_IoUs.append(np.max(field_IoUs))
-            pred_field_overlap.append(intersect_area[np.argmax(field_IoUs)])
+            ratio_field_overlap_pred.append(intersect_area_pred[np.argmax(field_IoUs)])
+            ratio_field_overlap_true.append(intersect_area_true[np.argmax(field_IoUs)])
             intersect_IDs.append(intersect_values[np.argmax(field_IoUs)])
         else:
             best_IoUs.append(0)
-            pred_field_overlap.append(0)
+            ratio_field_overlap_pred.append(0)
+            ratio_field_overlap_true.append(0)
             intersect_IDs.append(0)
         
         # fill centroid list
@@ -1166,17 +1171,17 @@ def get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext,
                 export_intermediate_products(row_col_start, filtered_instances_pred, dummy_gt, dummy_proj, \
                                             intermediate_path, filename=f'{t_ext}_{t_bound}_intersected_at_max_and_centroids_{row_col_start}.tif', noData=0)
 
-    return best_IoUs, centroid_IoUS, centroid_rows, centroid_cols, centroid_IDs, field_IDs, field_sizes, intersect_IDs, pred_field_overlap
+    return best_IoUs, centroid_IoUS, centroid_rows, centroid_cols, centroid_IDs, field_IDs, field_sizes, intersect_IDs, ratio_field_overlap_pred, ratio_field_overlap_true
 
 ########## main-function
 
 def get_IoUs_per_Tile(row_col_start, extent_true, extent_pred, boundary_pred, result_dir, \
-                      dummy_gt, dummy_proj, intermediate_path, intermediate=True, t_ext=False, t_bound=False):
+                      dummy_gt, dummy_proj, intermediate_path, intermediate=False, t_ext=False, t_bound=False):
     
     print(f'Starting on tile {row_col_start} for {result_dir}')
     # make a dictionary for export
-    k = ['row_col_start','t_ext','t_bound', 'max_IoU', 'centroid_IoU', 'centroid_row', 'centroid_col',\
-          'centroid_IDs', 'reference_field_IDs', 'reference_field_sizes', 'intersect_IDs', 'intersect_area'] #'medianIoU', 'meanIoU', 'IoU_50', 'IoU_80']
+    k = ['row_col_start','t_ext','t_bound', 'max_IoU', 'centroid_IoU', 'centroid_row', 'centroid_col', 'centroid_IDs',\
+         'reference_field_IDs', 'reference_field_sizes', 'intersect_IDs', 'ratio_intersect_area_pred', 'ratio_intersect_area_true'] #'medianIoU', 'meanIoU', 'IoU_50', 'IoU_80']
     v = [list() for i in range(len(k))]
     res = dict(zip(k, v))
 
@@ -1196,7 +1201,8 @@ def get_IoUs_per_Tile(row_col_start, extent_true, extent_pred, boundary_pred, re
         for t_bound in t_bounds:
             #print('thresholds: ' + str(t_ext) + ', ' +str(t_bound))
 
-            img_IoUs, centroid_IoUS, centroid_rows, centroid_cols, centroid_IDs, field_IDs, field_sizes , intersect_IDS, intersect_area = \
+            img_IoUs, centroid_IoUS, centroid_rows, centroid_cols, centroid_IDs, field_IDs, field_sizes , intersect_IDS,\
+                ratio_intersect_area_pred, ratio_intersect_area_true = \
                 get_IoUs(row_col_start, extent_true, extent_pred, boundary_pred, t_ext, t_bound, dummy_gt, \
                          dummy_proj, intermediate_path, intermediate=intermediate)
             
@@ -1213,7 +1219,8 @@ def get_IoUs_per_Tile(row_col_start, extent_true, extent_pred, boundary_pred, re
                 res['reference_field_IDs'].append(field_IDs[e])
                 res['reference_field_sizes'].append(field_sizes[e])
                 res['intersect_IDs'].append(intersect_IDS[e])
-                res['intersect_area'].append(intersect_area[e])
+                res['ratio_intersect_area_pred'].append(ratio_intersect_area_pred[e])
+                res['ratio_intersect_area_true'].append(ratio_intersect_area_true[e])
     
     # export results
     df  = pd.DataFrame(data = res)
