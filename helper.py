@@ -5,13 +5,14 @@ import rasterio, glob, xarray as xr
 from datetime import datetime
 import time
 import math
-import higra as hg
 from osgeo import gdal
-from skimage import measure
 
 import os,sys
 
-if 'workhorse' not in sys.executable.split('/'):
+from skimage import measure
+import higra as hg
+
+if not any(env in sys.executable.split('/') for env in ('workhorse', 'cds_era5')):
     import albumentations as A
     from albumentations.core.transforms_interface import  ImageOnlyTransform
     import torch
@@ -336,6 +337,7 @@ class TrainingTransform_for_rocks_Train(object):
         
         timgS2_t = timgS2_t.reshape(c2,t,h2,w2)
         return timgS2_t,  tmask_t
+    
     def __call__(self, *data):
         return self.mytransform(data)
 

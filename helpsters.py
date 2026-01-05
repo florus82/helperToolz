@@ -14,7 +14,9 @@ import pickle
 from itertools import chain
 import hashlib
 from datetime import datetime, timezone
-from skimage import measure
+import sys
+if 'cds_era5' not in sys.executable.split('/'):
+    from skimage import measure
 import io
 import contextlib
 import shutil
@@ -1690,39 +1692,43 @@ def maskVRT(vrtPath, maskArray, suffix):
     masked_arr =  np.dstack(b)
     makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}{suffix}.tif", bands=len(b))
 
-def maskVRT_water(vrtPath):
-    """Opens a vrt and applies dirty water mask --> slope = NA and aspect = 180
+def maskVRT_water(vrtPath, colorlist):
+    """OLD!!!!Opens a vrt and applies dirty water mask --> slope = NA and aspect = 180
+       NOW: a 5% threshold is applied on BNIR band
 
     Args:
         vrtPath (str): path to the vrt
-        maskArray (np.array): binary np array, where 1 == valid and 0 == maks
+        colorlist: the order in which the s2 bands are delivered. the bands of cube must start with them
     """
     ds = gdal.Open(vrtPath)
     b = []
     for band in range(ds.RasterCount):
         b.append(ds.GetRasterBand(band + 1).ReadAsArray())
     arr =  np.dstack(b)
-    mask = np.logical_and(arr[:,:,10] < 0.000000001, arr[:,:,11] == 180)
+    # mask = np.logical_and(arr[:,:,10] < 0.000000001, arr[:,:,11] == 180)
+    mask = arr[:,:,colorlist.index('BNR')] < 500 # BNIR below 5%
     masked_arr = np.where(mask[:,:,None],np.nan, arr)
     makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_watermask.tif", gdalType=gdal.GDT_Float32, bands=len(b))
 
-def maskVRT_water_and_drop_aux(vrtPath):
-    """Opens a vrt and applies dirty water mask --> slope = NA and aspect = 180
+def maskVRT_water_and_drop_aux(vrtPath, colorlist):
+    """OLD!!!!Opens a vrt and applies dirty water mask --> slope = NA and aspect = 180
+       NOW: a 5% threshold is applied on BNIR band
     after masking, slope, aspect, incidence will be dropped
 
     Args:
         vrtPath (str): path to the vrt
-        maskArray (np.array): binary np array, where 1 == valid and 0 == maks
+        colorlist: the order in which the s2 bands are delivered. the bands of cube must start with them
     """
     ds = gdal.Open(vrtPath)
     b = []
     for band in range(ds.RasterCount):
         b.append(ds.GetRasterBand(band + 1).ReadAsArray())
     arr =  np.dstack(b)
-    mask = np.logical_and(arr[:,:,10] < 0.000000001, arr[:,:,11] == 180)
+    # mask = np.logical_and(arr[:,:,10] < 0.000000001, arr[:,:,11] == 180)
+    mask = arr[:,:,colorlist.index('BNR')] < 500 # BNIR below 5%
     masked_arr = np.where(mask[:,:,None],np.nan, arr)
-    masked_arr = masked_arr[:,:,0:10]
-    makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_watermask.tif", gdalType=gdal.GDT_Float32, bands=9)
+    masked_arr = masked_arr[:,:,0:len(colorlist)]
+    makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_watermask.tif", gdalType=gdal.GDT_Float32, bands=masked_arr.shape[-1])
 
 
 def silent(func, *args, **kwargs):
