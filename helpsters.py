@@ -20,7 +20,6 @@ if 'cds_era5' not in sys.executable.split('/'):
 import io
 import contextlib
 import shutil
-import sys
 sys.path.append('/media/')
 from helperToolz.helper import *
 

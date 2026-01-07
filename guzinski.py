@@ -1039,7 +1039,7 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
                     with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
                         f.write(f'{e}')
                     return
-    print('check2')           
+          
     wind_speed_20 = calc_wind_speed(wind100_u, wind100_v) # check wind_u
     
     ds = gdal.Open(f'{ssrd_mean_path}surface_solar_radiation_downward_clear_sky_{year}_{int(MONTH_TO_02D[month])}')
@@ -1233,7 +1233,7 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
     output = TSEB.TSEB_PT(lst_20, vza_20, air_temp_20, wind_speed_20, ea, sp_20, Sn_C, Sn_S, L_dn, LAI_pos, h_C, emis_C, emis_S, 
     z_0M, d, z_u, z_T, resistance_form=None, calcG_params=None, const_L=None, f_g=fg,
     kB=0.0, massman_profile=None, verbose=True)
-    print('check3')
+
     for stori, ssrd_ras in zip([[storPath_c, storPath_s],[storPath_c_f, storPath_s_f]], [ssrd_mean_calc_20, ssrd_mean_func_20]):
         
         le_c = output[6]/ssrd_20
@@ -1461,7 +1461,7 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
 
                 runEvapi(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
                         tempDir=trash_path, path_to_temp=temp_dump_fold, path_to_sharp=sharp_outFolder, mvwin=mvwin, cv=cv,
-                        regrat=regrat, evap_outFolder=evap_outFolder, printInterim=printEvapInter, bio=bio_pars)
+                        regrat=regrat, evap_outFolder=path_safe(f'{evap_outFolder}{comp}/'), printInterim=printEvapInter, bio=bio_pars)
             
             
             # at the end of the date loop --> clean up temp folder and sharp
@@ -1652,3 +1652,34 @@ def leaf_optics_nir(Cw):
     tau = np.clip(tau, 0.0, 1.0)
 
     return rho, tau
+
+
+def make_ET_median(vrt_folder, ET_var, date_s, date_e, reg_search, outFolder, mask=False):
+    
+    files = getFilelist(f'{vrt_folder}{ET_var}/', '.vrt')
+    dicti = defaultdict(list)
+
+    for file in files:
+            m = reg_search.search(file).group()[:-1]
+            year, month, day = m.split('_')
+            day = day.zfill(2)  # "1" → "01", "13" → "13"
+            date_key = f"{year}{MONTH_TO_02D[month]}{day}"
+            
+            if date_s <= datetime.strptime(date_key, '%Y%m%d') < date_e:
+                dicti[datetime.strftime(date_s, '%Y_%m_%d')].append(file)
+        
+    for k, v in dicti.items():
+        arrL = []
+        for file in v:
+            ds = gdal.Open(file)
+            arr = ds.GetRasterBand(1).ReadAsArray()
+            arr[arr<=0] = np.nan
+            arr[arr>12] = np.nan
+            arrL.append(arr)
+        median_arr = np.nanmedian(np.dstack(arrL),axis=2)
+
+        if mask is not False:
+             outarr = median_arr * mask
+        else:
+             outarr = median_arr
+        makeTif_np_to_matching_tif(outarr, file, f"{outFolder}{ET_var}_{k}_median_ET.tif", 0)
