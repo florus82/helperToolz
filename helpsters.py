@@ -513,7 +513,7 @@ def warp_raster_to_reference(source_path, reference_path, output_path, resamplin
     '''
     source_path: the raster to be warped
     reference_path: the raster to which will be warped
-    output_path: here the warped raster will be stored; if not provided, the warped raster will be returned as memory object
+    output_path: here the warped raster will be stored; if MEM is used, the warped raster will be returned as memory object
     resampling: method to do resampling, e.g. bilinear, cubic, nearest
     keepRes: if set to true the warp will be done without changing the resolution of the raster at source_path to that of reference_path; if set to an integer,
     the pixel size of reference_path will be divided by that integer to gain a new pixel size 
