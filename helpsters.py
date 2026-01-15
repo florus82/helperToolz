@@ -15,13 +15,14 @@ from itertools import chain
 import hashlib
 from datetime import datetime, timezone
 import sys
-if 'cds_era5' not in sys.executable.split('/'):
+envdir = sys.executable.split('/')
+if 'xdem' not in envdir and 'cds_era5' not in envdir:
     from skimage import measure
-import io
-import contextlib
-import shutil
-sys.path.append('/media/')
-from helperToolz.helper import *
+    import io
+    import contextlib
+    import shutil
+    sys.path.append('/media/')
+    from helperToolz.helper import *
 
 #####################################################################################
 #####################################################################################

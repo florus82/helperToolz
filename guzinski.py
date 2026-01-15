@@ -582,13 +582,22 @@ def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, 
     ssrd_watt_flat = ssrd_watt.ravel()
     ssrd_watt_flat_masked = ssrd_watt_flat[valid_mask.ravel()]
     ghi = ssrd_watt_flat_masked
-    cos_zenith = np.cos(np.radians(solpos['zenith'].values[0]))
-    ghi_clear = dni_extra.values[0] * cos_zenith
-    kt = ghi / ghi_clear
+    # cos_zenith = np.cos(np.radians(solpos['zenith'].values)) # [0]
+    # ghi_clear = dni_extra.values * cos_zenith # [0]
+    # kt = ghi / ghi_clear
 
     # Decompose GHI to DNI and DHI using Erbs model
     dni, dhi = pvlib.irradiance.erbs(ghi, solpos['zenith'], arr_ts_masked)['dni'], \
             pvlib.irradiance.erbs(ghi, solpos['zenith'], arr_ts_masked)['dhi']
+
+    # cs = pvlib.clearsky.ineichen(
+    # times=arr_ts_masked,
+    # latitude=lat_flat_masked,
+    # longitude=lon_flat_masked,
+    # altitude=dem_flat_masked
+    # )
+    # dni = cs['dni']
+    # dhi = cs['dhi']
 
     # compute radiation on the tilted terrain
 
@@ -631,7 +640,7 @@ def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, 
                 altitude=dem_flat_masked
             )
 
-                        # Compute clearness index
+            # Compute clearness index
             ghi = ssrd_hour / 3600
             ghi_masked = ghi[valid_mask]
             # Decompose GHI to DNI and DHI using Erbs model
@@ -657,7 +666,10 @@ def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, 
     ssrd_mean = np.nansum(np.dstack(meanL), axis=2) / 24 # np.nanmean(np.dstack(meanL), axis = 2)
     ssrd_mean = ssrd_mean.reshape(slope.shape)
 
-    return poa_global_arr, zenith_arr, azimuth_arr, ssrd_watt, ssrd_mean # *3600 to bring back to J/m²
+    daily_energy = np.nansum(np.dstack([irr_2D*3600.0 for irr_2D in meanL]), axis=2)
+    daily_energy = daily_energy.reshape(slope.shape)
+
+    return poa_global_arr, zenith_arr, azimuth_arr, ssrd_watt, ssrd_mean, daily_energy # *3600 to bring back to J/m²
     
 
 def applyAdiabaticDEMsharpener(era5_temp, dem, geopot, rate, bheight):
@@ -880,7 +892,7 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
     
     # path to era5 raw data
     era5_path = '/data/Aldhani/eoagritwin/et/Auxiliary/ERA5/grib/'
-    ssrd_mean_path = '/data/Aldhani/eoagritwin/et/Auxiliary/ERA5/ssrd_mean_calc/'
+    # ssrd_mean_path = '/data/Aldhani/eoagritwin/et/Auxiliary/ERA5/ssrd_mean_calc/'
 
     # the DEM, SLOPE, ASPECT, LAT, LON will be used to sharpen some of the era5 variables (the the resolution of the DEM)
     dem_path = '/data/Aldhani/eoagritwin/et/Auxiliary/DEM/reprojected/DEM_GER_FORCE_WARP.tif' # epsg 4326
@@ -907,7 +919,7 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
     LST_file = f'{sharp_pathbase}{comp}_{year}_{month}_{day:02d}_{mvwin}_{cv}_{regrat}_{s2Mask}_{sharp}_{lstMask}_{tile}.tif' 
     # for NDVI calculation (estimating LAI and others) and warping to S2 resolution, we use the S2 composite used for sharpening
     # S2_file = [file for file in getFilelist(s2_pathbase, 'vrt', deep=False) if f'HIGHRES_{comp}_{year}_{month}_{day:02d}' in file][0]
-    S2_file = S2Path# [file for file in getFilelist(s2_pathbase, 'vrt', deep=True) if 'S2' in file][0]
+    S2_file = S2path# [file for file in getFilelist(s2_pathbase, 'vrt', deep=True) if 'S2' in file][0]
 
     # find era5 file that matches the month of LST observation
     valid_variables = sorted(list(dict.fromkeys(file.split('/')[-2] for file in getFilelist(era5_path, '.grib', deep=True) \
@@ -983,10 +995,11 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
 
         elif 'downward' in path: # terrain correction included
             try:
-                ssrd, szenith, sazimuth, ssrd_nc, ssrd_mean_func = get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib=path, reference_path=LST_acq_spatial_sub, 
-                                                                                lst_acq_file=LST_acq_spatial_sub, doy=day, 
-                                                                                slope_path=slope_sub,
-                                                                                aspect_path=aspect_sub,
+                ssrd, szenith, sazimuth, ssrd_nc, ssrd_mean_func, daily_energy = get_ssrdsc_warped_and_corrected_at_doy(
+                    path_to_ssrdsc_grib=path, reference_path=LST_acq_spatial_sub,
+                    lst_acq_file=LST_acq_spatial_sub, doy=day,
+                    slope_path=slope_sub,                             
+                                                       aspect_path=aspect_sub,
                                                                                 dem_path=dem_sub,
                                                                                 lat_path=lat_sub,
                                                                                 lon_path=lon_sub)
@@ -1044,8 +1057,8 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
           
     wind_speed_20 = calc_wind_speed(wind100_u, wind100_v) # check wind_u
     
-    ds = gdal.Open(f'{ssrd_mean_path}surface_solar_radiation_downward_clear_sky_{year}_{int(MONTH_TO_02D[month])}')
-    ssrd_mean = ds.GetRasterBand(day).ReadAsArray() / 3600
+    # ds = gdal.Open(f'{ssrd_mean_path}surface_solar_radiation_downward_clear_sky_{year}_{int(MONTH_TO_02D[month])}')
+    # ssrd_mean = ds.GetRasterBand(day).ReadAsArray() / 3600
     
     # ssrd_mean_calc_20 = warp_np_to_reference(ssrd_mean, f'{ssrd_mean_path}surface_solar_radiation_downward_clear_sky_{year}_{int(MONTH_TO_02D[month])}', LST_file) # check this too!!!!!
     ssrd_mean_func_20 = ssrd_mean_func
@@ -1277,8 +1290,9 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
     # aspect-tiles
     aspects = [file for file in getFilelist(path_to_aspect, '.tif') if tile_to_process in file] # if any tile name is in file
     # thuenen-tiles
-    thuenen = [file for file in getFilelist(path_to_agro, '.tif') if tile_to_process in file] # if any tile name is in file
-    
+    thuenen = [file for file in getFilelist(path_to_agro, '.tif') if tile_to_process in file and year in file] # if any tile name is in file
+    if(len(thuenen)) == 0:
+        thuenen = [file for file in getFilelist(path_to_agro, '.tif') if tile_to_process in file and '2021' in file]
     # get those tiles (and composite if more than one tile is provided)
     slope_path = f'{temp_dump_fold}SLOPE.vrt'
     gdal.BuildVRT(slope_path, slopes)
@@ -1514,7 +1528,7 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
 
                     runEvapi(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
                             tempDir=trash_path, path_to_temp=temp_dump_fold, path_to_sharp=sharp_outFolder, mvwin=mvwin, cv=cv,
-                            regrat=regrat, evap_outFolder=evap_outFolder, printInterim=printEvapInter, bio=bio_pars)
+                            regrat=regrat, evap_outFolder=evap_outFolder, S2path= S2_path, printInterim=printEvapInter, bio=bio_pars)
                 
                 
                 # at the end of the date loop --> clean up temp folder and sharp
@@ -1904,7 +1918,7 @@ def leaf_optics_nir(Cw):
     return rho, tau
 
 
-def make_ET_median(vrt_folder, ET_var, date_s, date_e, reg_search, outFolder, mask=False):
+def make_ET_median(vrt_folder, ET_var, date_s, date_e, reg_search, outFolder, mask=False, comp=False, sharp=False):
     
     files = getFilelist(f'{vrt_folder}{ET_var}/', '.vrt')
     dicti = defaultdict(list)
@@ -1915,7 +1929,7 @@ def make_ET_median(vrt_folder, ET_var, date_s, date_e, reg_search, outFolder, ma
             day = day.zfill(2)  # "1" → "01", "13" → "13"
             date_key = f"{year}{MONTH_TO_02D[month]}{day}"
             
-            if date_s <= datetime.strptime(date_key, '%Y%m%d') < date_e:
+            if date_s <= datetime.strptime(date_key, '%Y%m%d') <= date_e:
                 dicti[datetime.strftime(date_s, '%Y_%m_%d')].append(file)
         
     for k, v in dicti.items():
@@ -1923,8 +1937,8 @@ def make_ET_median(vrt_folder, ET_var, date_s, date_e, reg_search, outFolder, ma
         for file in v:
             ds = gdal.Open(file)
             arr = ds.GetRasterBand(1).ReadAsArray()
-            arr[arr<=0] = np.nan
-            arr[arr>12] = np.nan
+            arr[arr<=0] = 0
+            arr[arr>12] = 0
             arrL.append(arr)
         median_arr = np.nanmedian(np.dstack(arrL),axis=2)
 
@@ -1932,4 +1946,15 @@ def make_ET_median(vrt_folder, ET_var, date_s, date_e, reg_search, outFolder, ma
              outarr = median_arr * mask
         else:
              outarr = median_arr
-        makeTif_np_to_matching_tif(outarr, file, f"{outFolder}{ET_var}_{k}_median_ET.tif", 0)
+
+        suffix = []
+
+        if comp:
+            suffix.append(str(comp))
+
+        if sharp:
+            suffix.append(str(sharp))
+
+        suffix_str = "_" + "_".join(suffix) if suffix else ""
+    
+        makeTif_np_to_matching_tif(outarr, file, f"{outFolder}{ET_var}_{k}{suffix_str}_median_ET.tif", noData=0)
