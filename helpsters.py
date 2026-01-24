@@ -8,12 +8,14 @@ import os
 import xarray as xr 
 import osgeo
 from osgeo import ogr, osr
+gdal.DontUseExceptions()
 import xml.etree.ElementTree as ET
 import re
 import pickle
 from itertools import chain
 import hashlib
 from datetime import datetime, timezone
+from joblib import Parallel, delayed
 import sys
 envdir = sys.executable.split('/')
 if 'xdem' not in envdir and 'cds_era5' not in envdir:
@@ -128,6 +130,89 @@ def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack, temp_path =
     #     preds = pickle.load(f)
 
     return preds
+
+
+def predict_on_GPU_without_preload(path_to_model, list_of_row_col_indices, list_of_vrts, temp_path = False):
+    '''
+    path_to_model: path to .pth file
+    list_of_row_col_indices: a list in the order row_start, row_end, col_start, col_end (output of get_row_col_indices). This will be used to read in small chips from npdstack
+    list_of_vrtFiles for input stack: has to be read-in and normalized
+    '''
+
+    normalizer = AI4BNormal_S2()
+
+    row_start = list_of_row_col_indices[0]
+    row_end   = list_of_row_col_indices[1]
+    col_start = list_of_row_col_indices[2]
+    col_end   = list_of_row_col_indices[3]
+
+    # define the model (.pth) and assess loss curves
+    #model_name = dataFolder + 'output/models/model_state_All_but_LU_transformed_42.pth'
+    model_name_short = path_to_model.split('/')[-1].split('.')[0]
+ 
+    NClasses = 1
+    nf = 96
+    verbose = True
+    model_config = {'in_channels': 4,
+                    'spatial_size_init': (128, 128),
+                    'depths': [2, 2, 5, 2],
+                    'nfilters_init': nf,
+                    'nheads_start': nf // 4,
+                    'NClasses': NClasses,
+                    'verbose': verbose,
+                    'segm_act': 'sigmoid'}
+
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+    if torch.cuda.is_available():
+        modeli = ptavit3d_dn(**model_config).to(device)
+        modeli.load_state_dict(torch.load(path_to_model))
+        model = modeli.to(device) # Set model to gpu
+        model.eval()
+        
+    preds = []
+
+    for i in range(len(row_end)):
+        for j in range(len(col_end)):
+            bands = []
+            for vrt in list_of_vrts:
+                ds = gdal.Open(vrt, gdal.GA_ReadOnly)
+                bands.append(
+                    ds.GetRasterBand(1).ReadAsArray(col_start[j], row_start[i], col_end[j] - col_start[j], row_end[i] - row_start[i])
+                )
+            cube = np.dstack(bands)  # (y, x, bands)
+
+            data_cube = np.transpose(cube, (2, 0, 1))
+            reshaped_cube = data_cube.reshape(4, 6, cube.shape[0], cube.shape[1])
+            
+            norm_cube = normalizer(reshaped_cube)
+
+            image = torch.tensor(norm_cube) # npdstack[np.newaxis, :, :, row_start[i]:row_end[i], col_start[j]:col_end[j]])
+            image = image.to(torch.float)
+            image = image.unsqueeze(0).to(device)  # Move image to the correct device
+        
+            with torch.no_grad():
+                pred = model(image)
+                preds.append(pred.detach().cpu().numpy())
+
+                print(f"{i} from {len(row_end)} and {j} from {len(col_end)}")
+                
+    torch.cuda.empty_cache()
+    del model
+    del modeli
+    del device
+    del image
+
+    if temp_path:
+        with open(path_safe(f'{temp_path}preds.pkl'), 'wb') as f:
+            pickle.dump(preds, f)
+
+    # Load again
+    # with open(f'{temp_path}preds.pkl', 'rb') as f:
+    #     preds = pickle.load(f)
+
+    return preds
+
 
 def export_GPU_predictions(list_of_predictions, path_to_mask, vrt_path, list_of_row_col_indices, out_path, chipsize, overlap):
     '''
@@ -920,6 +1005,75 @@ def loadVRTintoNumpyAI4(vrtPath, applyNormalizer=True):
         return normalizer(reshaped_cube)
     else:
         return reshaped_cube
+    
+def loadVRTintoNumpyAI4_PARALLEL(vrtPath, no_tiles, ncores, tempP, applyNormalizer=True):
+    '''vrtPath: path in which vrts are stored
+        vrts will be loaded into numpy array and normalized (for Sentinel-2 10m bands!!!!!)'''
+    vrtFiles = [file for file in getFilelist(vrtPath, '.vrt') if 'Cube' not in file]
+    vrtFiles = sortListwithOtherlist([int(vrt.split('_')[-1].split('.')[0]) for vrt in vrtFiles], vrtFiles)[-1]
+    
+    vrt_ds = gdal.Open(vrtFiles[0])
+    xSiz = vrt_ds.RasterXSize
+    ySiz = vrt_ds.RasterYSize
+
+
+    keys = ['x_off', 'y_off', 'x_count', 'y_count']
+
+    y_off_L   = [i for i in range(0, ySiz, math.ceil(ySiz / int(no_tiles**0.5)))]
+    ydum      = y_off_L + [ySiz]
+    y_count_L = [ydum[i+1] - y_off_L[i] for i in range(len(y_off_L))]
+
+    x_off_L   = [i for i in range(0, xSiz, math.ceil(xSiz / int(no_tiles**0.5)))]
+    xdum      = x_off_L + [xSiz]
+    x_count_L = [xdum[i+1] - x_off_L[i] for i in range(len(x_off_L))]
+
+    vals = [x_off_L * int(no_tiles**0.5), [i for i in y_off_L for _ in range(int(no_tiles**0.5))],
+            x_count_L * int(no_tiles**0.5), [i for i in y_count_L for _ in range(int(no_tiles**0.5))]]
+
+    subtil = dict(zip(keys, vals))
+
+    joblist = []
+    for idx in range(len(subtil['x_count'])):
+        joblist.append([vrtFiles, subtil['x_off'][idx], subtil['y_off'][idx], subtil['x_count'][idx], subtil['y_count'][idx]])
+    
+    def read_tile(fileList, xoff, yoff, xcount, ycount):
+        bands = []
+        for vrt in fileList:
+            ds_sub = gdal.Open(vrt, gdal.GA_ReadOnly)
+            bands.append(
+                ds_sub.GetRasterBand(1).ReadAsArray(xoff, yoff, xcount, ycount)
+            )
+        cube = np.dstack(bands)  # (y, x, bands)
+
+        data_cube = np.transpose(cube, (2, 0, 1))
+        reshaped_cube = data_cube.reshape(4, 6, cube.shape[0], cube.shape[1])
+        normalizer = AI4BNormal_S2()
+        if applyNormalizer:
+            return normalizer(reshaped_cube), (xoff, yoff, xcount, ycount)
+        else:
+            return reshaped_cube, (xoff, yoff, xcount, ycount)
+        
+    results = Parallel(n_jobs=ncores)(delayed(read_tile)(job[0], job[1], job[2], job[3], job[4]) for job in joblist)
+
+    print('parallel stop')
+    ref_ds = gdal.Open(vrtFiles[0])
+    full_x = ref_ds.RasterXSize
+    full_y = ref_ds.RasterYSize
+
+    dtype = results[0][0].dtype
+
+    final_cube = np.memmap(
+        f"{tempP}final_cube.dat",
+        dtype=dtype,
+        mode="w+",
+        shape=(4, 6, full_y, full_x)
+    )
+
+    for cube, (xoff, yoff, xcount, ycount) in results:
+        final_cube[:, :, yoff:yoff + ycount, xoff:xoff + xcount] = cube
+
+    print('cube created')
+    return final_cube
 
 #####################################################################################
 #####################################################################################
@@ -1230,6 +1384,13 @@ def get_IoUs_per_Tile(row_col_start, extent_true, extent_pred, boundary_pred, re
 
     print(f'Finished tile {row_col_start}')
 
+
+def apply_segm_param(t_ext, t_bound, extent_pred, boundary_pred, row_col_id, outPath, dummy_gt, dummy_proj):
+    instances_pred = InstSegm(extent_pred, boundary_pred, t_ext=t_ext, t_bound=t_bound)
+    instances_pred = measure.label(instances_pred, background=-1) 
+    export_intermediate_products(row_col_id, instances_pred, dummy_gt, dummy_proj,\
+                                outPath, filename=f'{t_ext}_{t_bound}_prediction_segmented_{row_col_id}.tif', noData=0)
+    print(f"{row_col_id} finished")
 #####################################################################################
 #####################################################################################
 ################# General stuff #####################################################
