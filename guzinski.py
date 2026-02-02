@@ -1613,7 +1613,8 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
             lowRes_files = []
             highRes_files = []
             highRes_names = []
-            
+            sharpList = []
+
             # get S2 bands
             tilesS2 = [file for file in getFilelist(path_to_S2_tiles, '.tif', deep=True) if tile_to_process in file and f'{compDate}.tif' in file]
             tilesS2 = [t2 for col in colors for t2 in tilesS2 if col in t2]
@@ -1645,45 +1646,81 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
                 for k, v in band_dict.items(): # basically, this is a loop over the days 
                     month = v['month']
                     band = int(v['band'])
-                    v_path = f'{path_to_LST}Daily_LST_{comp_stat}_{year}_{month}.tif'
-                    ds = gdal.Open(v_path, 0)
-
-                    if path_to_dem:
-                        # calculate biophysical helper and parameter
-                        try:
-                            calc_biophys_helper(acq_path=path_to_acq, dem_path=dem_path, lat_path=lat_path, lon_path=lon_path,
-                                                vaa_path=path_to_vaa, vza_path=path_to_vza, year=year, month=month,
-                                                doy=band, outPath=temp_dump_fold, comp_stat=comp_stat)
-                        except Exception as e:
-                            print(f'broken because: {e} path_dem={path_to_dem} comp={comp_stat} month={month} day={band} tile={tile_to_process}')
-                            break
-
-                        get_biophysical_parameter(path_S2=tilesS2, path_Sun=f"{temp_dump_fold}sun/", year=year, month=month, doy=band,
-                                                outPath=temp_dump_fold, comp_stat=comp_stat)
                         
                     # export the LST for that day
-                    LST_arr = ds.GetRasterBand(band).ReadAsArray() # store as single Tiff in temp
                     daily_lst_path = f'{temp_dump_fold}Daily_LST_{comp_stat}_{year}_{month}_{band:02d}.tif'
-                    makeTif_np_to_matching_tif(LST_arr, v_path, daily_lst_path)
+                    if os.path.exists(daily_lst_path):
+                        pass
+                    else:
+                        v_path = f'{path_to_LST}Daily_LST_{comp_stat}_{year}_{month}.tif'
+                        ds = gdal.Open(v_path, 0)
+                        LST_arr = ds.GetRasterBand(band).ReadAsArray() # store as single Tiff in temp
+                        makeTif_np_to_matching_tif(LST_arr, v_path, daily_lst_path)
                 
-                    # store the paths for selecting incidence for corresponding LST
-                    # incid_date = f'{year}_{month}_{band:02d}.tif'
-
-                    # incidence-tiles
-                    # incids = [file for file in getFilelist(path_to_incident, '.tif', deep=True) if tile_to_process in file] 
-                    # incid_path = incids[0]
-                    # incid_path = [file for file in getFilelist(path_to_incident, '.tif', deep=True) if f'{tile_to_process}_{incid_date}' in file][0]
 
                     # create highRes file through exapnding the vrt of S2
                     highRes_path = f"{temp_dump_fold}HIGHRES_{comp_stat}_{year}_{month}_{band:02d}.vrt"
-                    calc_ind = 0
-
+                    skipper_counter = 0
                     for predi in predList: # different predictor combinations for the sharpening
+                        skip_pred = 0
+                        skip_sharp = 0
+
+                        # first check if already sharpened or evaped
+                        if S2mask == 1:
+                            expected_evap_files = [
+                                f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                                f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Soil_func.tif"
+                            ]
+                            expected_sharp_files = [
+                                f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}.tif"
+                            ]
+                        elif S2mask == 2:
+                            expected_evap_files = [
+                                f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                                f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Soil_func.tif"
+                            ]
+                            expected_sharp_files = [
+                                f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}.tif"
+                            ]
+                        elif S2mask == 3:
+                            expected_evap_files = [
+                                f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                                f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Soil_func.tif",
+                                f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                                f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Soil_func.tif"
+                            ]
+                            expected_sharp_files = [
+                                f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}.tif",
+                                f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}.tif"
+                            ]
+                        
+                        if all(os.path.exists(path) for path in expected_evap_files):
+                            print('combi already processed', flush=True)
+                            skip_pred = 1
+                            skipper_counter += 1
+
+                        elif any(os.path.exists(errorlog) for errorlog in 
+                                 [f"{trash_path}ERROR_{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET.log",
+                                  f"{trash_path}ERROR_{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET.log"]):
+                            print('evaping this day not possible')
+                            skip_pred = 1
+                            skipper_counter += 1
+
+                        else:
+                            # think about incorporating here a sharpener check! tricky part will be passing on the file into the sharpList
+                            # maybe passing the proper name into list -> highRes_files, and then do a final check before sharpening
+                            if all(os.path.exists(path) for path in expected_sharp_files):
+                                print('combi already shapred - pass on to evap queue', flush=True)
+                                for sharpedFile in expected_sharp_files:
+                                    sharpList.append(sharpedFile)
+                                    print(sharpedFile)
+                                skip_sharp = 1
+
+                        if skip_sharp or skip_pred == 1:
+                            continue
                         if predi == 'allpred':
-                            # calculate incidence
-                            if calc_ind == 0:                   
-                                calc_Incidence(tile=tile_to_process, year=year, comp=comp_stat, outFolder=temp_dump_fold, time_dict=band_dict)
-                                calc_ind += 1  
+                            # calculate incidence    
+                            calc_Incidence(tile=tile_to_process, year=year, comp=comp_stat, outFolder=temp_dump_fold, time_dict=band_dict) 
                             incid_path = f'{temp_dump_fold}INCIDENCE_{comp_stat}_{year}_{month}_{band:02d}.tif'
                             gdal.BuildVRT(highRes_path, [S2_path, slope_path, aspect_path, incid_path], separate=True)
                             maskVRT_water(highRes_path, colorlist=colors)
@@ -1712,11 +1749,21 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
                             highRes_files.append(f"{highRes_path.split('.')[0]}_watermask_S2_agromask_{predi}.tif")
                             lowRes_files.append(daily_lst_path)
                             highRes_names.append(f"S2Masked_{predi}")
-            
-            # sharp all files for that day and all compstats
-            sharpList = []
+                    if skipper_counter != len(predList): # i.e. not every pred was skipped. therefore check if biophys calc is needed for that day
+                        if path_to_dem:
+                            # calculate biophysical helper and parameter
+                            try:
+                                calc_biophys_helper(acq_path=path_to_acq, dem_path=dem_path, lat_path=lat_path, lon_path=lon_path,
+                                                    vaa_path=path_to_vaa, vza_path=path_to_vza, year=year, month=month,
+                                                    doy=band, outPath=temp_dump_fold, comp_stat=comp_stat)
+                            except Exception as e:
+                                print(f'broken because: {e} path_dem={path_to_dem} comp={comp_stat} month={month} day={band} tile={tile_to_process}')
+                                break
 
-            for idx, highResFilename in enumerate(highRes_files):
+                            get_biophysical_parameter(path_S2=tilesS2, path_Sun=f"{temp_dump_fold}sun/", year=year, month=month, doy=band,
+                                                    outPath=temp_dump_fold, comp_stat=comp_stat)
+            if len(highRes_files) != 0:
+                for idx, highResFilename in enumerate(highRes_files):
                     lowResFilename = lowRes_files[idx]
                     # f1 = f'{sharp_outFolder}{'/'.join(highResFilename.split('.')[0].split('_')[2:5])}/'
                     for maskname, mask_lowRes in zip(['withoutLSTmask'], ['']): # 'withLSTmask'  lowmask_bin_path
@@ -1731,23 +1778,23 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
                                     # os.makedirs(f'{f3}Residuals/', exist_ok=True)
                                     # os.makedirs(f'{f3}Values/', exist_ok=True)
 
-                                    os.makedirs(f'{sharp_outFolder}Residuals/', exist_ok=True)
-                                    os.makedirs(f'{sharp_outFolder}Values/', exist_ok=True)
+                                    os.makedirs(f"{sharp_outFolder}Residuals/", exist_ok=True)
+                                    os.makedirs(f"{sharp_outFolder}Values/", exist_ok=True)
                                     
                                     # sharpened_file = f'{f3}{'_'.join(highResFilename.split('.')[0].split('_')[2:6])}_{kombi}_{tile_to_process}.tif'
                                     sharpened_file = f"{sharp_outFolder}{'_'.join(highResFilename.split('.')[0].split('_')[1:5])}_{kombi}_{tile_to_process}.tif"
                                     
                                     # check if evap file for sharpened_file already exists (might happen when we restart a process that terminated unexpectedly
                                     # before and now we go through the last date from datelist that had been processed)
-                                    file_name = f"{evap_outFolder}{sharpened_file.split('/')[-1].split('_')[0]}_{sharpened_file.split('/')[-1].split('_')[1]}\
-                                        _{sharpened_file.split('/')[-1].split('_')[2]}_{int(sharpened_file.split('/')[-1].split('_')[3])}_{movWin}_{cv}_{regrat}_\
-                                            {sharpened_file.split('/')[-1].split('_')[9]}_{sharpened_file.split('/')[-1].split('_')[7]}_\
-                                                {sharpened_file.split('/')[-1].split('_')[8]}_{tile_to_process}"
+                                    # file_name = f"{evap_outFolder}{sharpened_file.split('/')[-1].split('_')[0]}_{sharpened_file.split('/')[-1].split('_')[1]}\
+                                    #     _{sharpened_file.split('/')[-1].split('_')[2]}_{int(sharpened_file.split('/')[-1].split('_')[3])}_{movWin}_{cv}_{regrat}_\
+                                    #         {sharpened_file.split('/')[-1].split('_')[9]}_{sharpened_file.split('/')[-1].split('_')[7]}_\
+                                    #             {sharpened_file.split('/')[-1].split('_')[8]}_{tile_to_process}"
                                     
 
-                                    if (os.path.exists(f"{file_name}_ET_Canopy_func.tif") and os.path.exists(f"{file_name}_ET_Soil_func.tif")):
-                                        print(f"{file_name} already created")
-                                        continue
+                                    # if (os.path.exists(f"{file_name}_ET_Canopy_func.tif") and os.path.exists(f"{file_name}_ET_Soil_func.tif")):
+                                    #     print(f"{file_name} already created")
+                                    #     continue
 
                                     runSharpi(highResFilename, lowResFilename, lowResMaskFilename, cv, movWin, regrat, sharpened_file, useDecisionTree = True)
                                     
@@ -1756,32 +1803,33 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
                                     # should run the function and return a list with the paths for all the created files
                                     # this list will then be passed on to runEvapi
                                     sharpList.append(sharpened_file)
-            
-            # calc evapo for all compstats at that day
-            for sharped in sharpList:
-                comp = sharped.split('/')[-1].split('_')[0]
-                year = sharped.split('/')[-1].split('_')[1]
-                month = sharped.split('/')[-1].split('_')[2]
-                day = int(sharped.split('/')[-1].split('_')[3])
-                mvwin = sharped.split('/')[-1].split('_')[4]
-                cv = sharped.split('/')[-1].split('_')[5]
-                regrat = sharped.split('/')[-1].split('_')[6]
-                sharp = sharped.split('/')[-1].split('_')[8]
-                s2Mask = sharped.split('/')[-1].split('_')[7]
-                lstMask = sharped.split('/')[-1].split('_')[9]
-                tile = '_'.join(sharped.split('/')[-1].split('.')[0].split('_')[-2:])
 
-                if path_to_dem:
-                    bio_pars = [file for file in getFilelist(f'{temp_dump_fold}bio/', '.tif') if f'{year}_{month}_{day}.tif' in file]
-                else:
-                    bio_pars = False
+            if len(sharpList) != 0:   
+                # calc evapo for all compstats at that day
+                for sharped in sharpList:
+                    comp = sharped.split('/')[-1].split('_')[0]
+                    year = sharped.split('/')[-1].split('_')[1]
+                    month = sharped.split('/')[-1].split('_')[2]
+                    day = int(sharped.split('/')[-1].split('_')[3])
+                    mvwin = sharped.split('/')[-1].split('_')[4]
+                    cv = sharped.split('/')[-1].split('_')[5]
+                    regrat = sharped.split('/')[-1].split('_')[6]
+                    sharp = sharped.split('/')[-1].split('_')[8]
+                    s2Mask = sharped.split('/')[-1].split('_')[7]
+                    lstMask = sharped.split('/')[-1].split('_')[9]
+                    tile = '_'.join(sharped.split('/')[-1].split('.')[0].split('_')[-2:])
 
+                    if path_to_dem:
+                        bio_pars = [file for file in getFilelist(f'{temp_dump_fold}bio/', '.tif') if f'{year}_{month}_{day}.tif' in file]
+                    else:
+                        bio_pars = False
+
+                    
+
+                    runEvapi(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
+                            tempDir=trash_path, path_to_temp=temp_dump_fold, path_to_sharp=sharp_outFolder, mvwin=mvwin, cv=cv,
+                            regrat=regrat, evap_outFolder=evap_outFolder, S2path=S2_path, printInterim=printEvapInter, bio=bio_pars)
                 
-
-                runEvapi(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
-                        tempDir=trash_path, path_to_temp=temp_dump_fold, path_to_sharp=sharp_outFolder, mvwin=mvwin, cv=cv,
-                        regrat=regrat, evap_outFolder=evap_outFolder, S2path=S2_path, printInterim=printEvapInter, bio=bio_pars)
-            
             
             killDates = [f"{year}_{v['month']}_{v['band']:02d}" for k, v in band_dict.items()]
 
