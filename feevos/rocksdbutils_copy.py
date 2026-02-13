@@ -238,7 +238,6 @@ class RocksDBReader(_RocksDBBase):
 
         return all_inputs
 
-
 ### Convenience class that writes data into database
 from time import time
 from datetime import timedelta
@@ -331,7 +330,6 @@ class Rasters2RocksDB(object):
             
         print (" XXXXXXXXXXXXXXXXXXXXXXX Done! XXXXXXXXXXXXXXXXXXXXXX")
                 
-
 #### TORCH Dataset Class 
 import torch
 class RocksDBDataset(torch.utils.data.Dataset):

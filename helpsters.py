@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from joblib import Parallel, delayed
 import sys
 envdir = sys.executable.split('/')
-if 'xdem' not in envdir and 'cds_era5' not in envdir:
+if 'xdem' not in envdir and 'cds_era5' not in envdir and 's3stac' not in envdir:
     from skimage import measure
     import io
     import contextlib
