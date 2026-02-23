@@ -66,22 +66,13 @@ def get_row_col_indices(chipsize, overlap, number_of_rows, number_of_cols):
 
     return [row_start, row_end, col_start, col_end]
 
-def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack, temp_path = False):
+def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack, batch_size=1, temp_path = False):
     '''
     path_to_model: path to .pth file
     list_of_row_col_indices: a list in the order row_start, row_end, col_start, col_end (output of get_row_col_indices). This will be used to read in small chips from npdstack
     npdstack: normalized sentinel-2 npdstack (output from loadVRTintoNUmpyAI4)
     '''
 
-    row_start = list_of_row_col_indices[0]
-    row_end   = list_of_row_col_indices[1]
-    col_start = list_of_row_col_indices[2]
-    col_end   = list_of_row_col_indices[3]
-
-    # define the model (.pth) and assess loss curves
-    #model_name = dataFolder + 'output/models/model_state_All_but_LU_transformed_42.pth'
-    model_name_short = path_to_model.split('/')[-1].split('.')[0]
- 
     NClasses = 1
     nf = 96
     verbose = True
@@ -95,36 +86,47 @@ def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack, temp_path =
                     'segm_act': 'sigmoid'}
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    model = ptavit3d_dn(**model_config).to(device)
+    model.load_state_dict(torch.load(path_to_model, map_location=device))
+    model.eval()
+   
+    row_start, row_end, col_start, col_end = list_of_row_col_indices
 
-    if torch.cuda.is_available():
-        modeli = ptavit3d_dn(**model_config).to(device)
-        modeli.load_state_dict(torch.load(path_to_model))
-        model = modeli.to(device) # Set model to gpu
-        model.eval()
-        
     preds = []
-
+    patches = []
+    # cut np array into patches
     for i in range(len(row_end)):
         for j in range(len(col_end)):
-        
-            image = torch.tensor(npdstack[np.newaxis, :, :, row_start[i]:row_end[i], col_start[j]:col_end[j]])
-            image = image.to(torch.float)
-            image = image.to(device)  # Move image to the correct device
-        
-            with torch.no_grad():
-                pred = model(image)
-                preds.append(pred.detach().cpu().numpy())
+            patches.append(npdstack[np.newaxis, :, :, row_start[i]:row_end[i], col_start[j]:col_end[j]])
+
+    # inference
+    with torch.inference_mode():
+        with torch.cuda.amp.autocast(device_type='cuda', dtype=torch.bfloat16):
+            for k in range(0, len(patches), batch_size):
+                batch_np = np.concatenate(patches[k:k+batch_size], axis=0)
+                batch_tensor = torch.from_numpy(batch_np).float().to(device, non_blocking=True)
+                batch_pred = model(batch_tensor)
+                preds.append(batch_pred.cpu())  
+
+    preds = torch.cat(preds, dim=0).numpy()
+
+    # image = torch.tensor()
+    # image = image.to(torch.float)
+    # image = image.to(device)  # Move image to the correct device
+
+    # with torch.no_grad():
+    #     pred = model(image)
+    #     preds.append(pred.detach().cpu().numpy())
                 
-    torch.cuda.empty_cache()
-    del model
-    del modeli
-    del device
-    del image
+    # torch.cuda.empty_cache()
+    # del model
+    # del modeli
+    # del device
+    # del image
 
     if temp_path:
         with open(path_safe(f'{temp_path}preds.pkl'), 'wb') as f:
             pickle.dump(preds, f)
-
     # Load again
     # with open(f'{temp_path}preds.pkl', 'rb') as f:
     #     preds = pickle.load(f)
@@ -132,86 +134,86 @@ def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack, temp_path =
     return preds
 
 
-def predict_on_GPU_without_preload(path_to_model, list_of_row_col_indices, list_of_vrts, temp_path = False):
-    '''
-    path_to_model: path to .pth file
-    list_of_row_col_indices: a list in the order row_start, row_end, col_start, col_end (output of get_row_col_indices). This will be used to read in small chips from npdstack
-    list_of_vrtFiles for input stack: has to be read-in and normalized
-    '''
+# def predict_on_GPU_without_preload(path_to_model, list_of_row_col_indices, list_of_vrts, temp_path = False):
+#     '''
+#     path_to_model: path to .pth file
+#     list_of_row_col_indices: a list in the order row_start, row_end, col_start, col_end (output of get_row_col_indices). This will be used to read in small chips from npdstack
+#     list_of_vrtFiles for input stack: has to be read-in and normalized
+#     '''
 
-    normalizer = AI4BNormal_S2()
+#     normalizer = AI4BNormal_S2()
 
-    row_start = list_of_row_col_indices[0]
-    row_end   = list_of_row_col_indices[1]
-    col_start = list_of_row_col_indices[2]
-    col_end   = list_of_row_col_indices[3]
+#     row_start = list_of_row_col_indices[0]
+#     row_end   = list_of_row_col_indices[1]
+#     col_start = list_of_row_col_indices[2]
+#     col_end   = list_of_row_col_indices[3]
 
-    # define the model (.pth) and assess loss curves
-    #model_name = dataFolder + 'output/models/model_state_All_but_LU_transformed_42.pth'
-    model_name_short = path_to_model.split('/')[-1].split('.')[0]
+#     # define the model (.pth) and assess loss curves
+#     #model_name = dataFolder + 'output/models/model_state_All_but_LU_transformed_42.pth'
+#     model_name_short = path_to_model.split('/')[-1].split('.')[0]
  
-    NClasses = 1
-    nf = 96
-    verbose = True
-    model_config = {'in_channels': 4,
-                    'spatial_size_init': (128, 128),
-                    'depths': [2, 2, 5, 2],
-                    'nfilters_init': nf,
-                    'nheads_start': nf // 4,
-                    'NClasses': NClasses,
-                    'verbose': verbose,
-                    'segm_act': 'sigmoid'}
+#     NClasses = 1
+#     nf = 96
+#     verbose = True
+#     model_config = {'in_channels': 4,
+#                     'spatial_size_init': (128, 128),
+#                     'depths': [2, 2, 5, 2],
+#                     'nfilters_init': nf,
+#                     'nheads_start': nf // 4,
+#                     'NClasses': NClasses,
+#                     'verbose': verbose,
+#                     'segm_act': 'sigmoid'}
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+#     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-    if torch.cuda.is_available():
-        modeli = ptavit3d_dn(**model_config).to(device)
-        modeli.load_state_dict(torch.load(path_to_model))
-        model = modeli.to(device) # Set model to gpu
-        model.eval()
+#     if torch.cuda.is_available():
+#         modeli = ptavit3d_dn(**model_config).to(device)
+#         modeli.load_state_dict(torch.load(path_to_model))
+#         model = modeli.to(device) # Set model to gpu
+#         model.eval()
         
-    preds = []
+#     preds = []
 
-    for i in range(len(row_end)):
-        for j in range(len(col_end)):
-            bands = []
-            for vrt in list_of_vrts:
-                ds = gdal.Open(vrt, gdal.GA_ReadOnly)
-                bands.append(
-                    ds.GetRasterBand(1).ReadAsArray(col_start[j], row_start[i], col_end[j] - col_start[j], row_end[i] - row_start[i])
-                )
-            cube = np.dstack(bands)  # (y, x, bands)
+#     for i in range(len(row_end)):
+#         for j in range(len(col_end)):
+#             bands = []
+#             for vrt in list_of_vrts:
+#                 ds = gdal.Open(vrt, gdal.GA_ReadOnly)
+#                 bands.append(
+#                     ds.GetRasterBand(1).ReadAsArray(col_start[j], row_start[i], col_end[j] - col_start[j], row_end[i] - row_start[i])
+#                 )
+#             cube = np.dstack(bands)  # (y, x, bands)
 
-            data_cube = np.transpose(cube, (2, 0, 1))
-            reshaped_cube = data_cube.reshape(4, 6, cube.shape[0], cube.shape[1])
+#             data_cube = np.transpose(cube, (2, 0, 1))
+#             reshaped_cube = data_cube.reshape(4, 6, cube.shape[0], cube.shape[1])
             
-            norm_cube = normalizer(reshaped_cube)
+#             norm_cube = normalizer(reshaped_cube)
 
-            image = torch.tensor(norm_cube) # npdstack[np.newaxis, :, :, row_start[i]:row_end[i], col_start[j]:col_end[j]])
-            image = image.to(torch.float)
-            image = image.unsqueeze(0).to(device)  # Move image to the correct device
+#             image = torch.tensor(norm_cube) # npdstack[np.newaxis, :, :, row_start[i]:row_end[i], col_start[j]:col_end[j]])
+#             image = image.to(torch.float)
+#             image = image.unsqueeze(0).to(device)  # Move image to the correct device
         
-            with torch.no_grad():
-                pred = model(image)
-                preds.append(pred.detach().cpu().numpy())
+#             with torch.no_grad():
+#                 pred = model(image)
+#                 preds.append(pred.detach().cpu().numpy())
 
-                print(f"{i} from {len(row_end)} and {j} from {len(col_end)}")
+#                 print(f"{i} from {len(row_end)} and {j} from {len(col_end)}")
                 
-    torch.cuda.empty_cache()
-    del model
-    del modeli
-    del device
-    del image
+#     torch.cuda.empty_cache()
+#     del model
+#     del modeli
+#     del device
+#     del image
 
-    if temp_path:
-        with open(path_safe(f'{temp_path}preds.pkl'), 'wb') as f:
-            pickle.dump(preds, f)
+#     if temp_path:
+#         with open(path_safe(f'{temp_path}preds.pkl'), 'wb') as f:
+#             pickle.dump(preds, f)
 
-    # Load again
-    # with open(f'{temp_path}preds.pkl', 'rb') as f:
-    #     preds = pickle.load(f)
+#     # Load again
+#     # with open(f'{temp_path}preds.pkl', 'rb') as f:
+#     #     preds = pickle.load(f)
 
-    return preds
+#     return preds
 
 
 def export_GPU_predictions(list_of_predictions, path_to_mask, vrt_path, list_of_row_col_indices, out_path, chipsize, overlap):
