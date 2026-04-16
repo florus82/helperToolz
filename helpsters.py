@@ -1569,7 +1569,6 @@ def getSpatRefRas(layer):
         SPRef = osr.SpatialReference()
         SPRef.ImportFromWkt(lyr.GetProjection())
 
-    #print(SPRef)
     return(SPRef)
 
 def getSpatRefVec(layer):
@@ -1869,7 +1868,13 @@ def maskVRT_water(vrtPath, colorlist):
         b.append(ds.GetRasterBand(band + 1).ReadAsArray())
     arr =  np.dstack(b)
     # mask = np.logical_and(arr[:,:,10] < 0.000000001, arr[:,:,11] == 180)
-    mask = arr[:,:,colorlist.index('BNR')] < 500 # BNIR below 5%
+
+    if 'BNR' in colorlist:
+        indi = 'BNR'
+    else:
+        indi = 'BROADNIR'
+
+    mask = arr[:,:,colorlist.index(indi)] < 500 # BNR below 5% # 
     masked_arr = np.where(mask[:,:,None],np.nan, arr)
     makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_watermask.tif", gdalType=gdal.GDT_Float32, bands=len(b))
 
@@ -1888,7 +1893,13 @@ def maskVRT_water_and_drop_aux(vrtPath, colorlist):
         b.append(ds.GetRasterBand(band + 1).ReadAsArray())
     arr =  np.dstack(b)
     # mask = np.logical_and(arr[:,:,10] < 0.000000001, arr[:,:,11] == 180)
-    mask = arr[:,:,colorlist.index('BNR')] < 500 # BNIR below 5%
+
+    if 'BNR' in colorlist:
+        indi = 'BNR'
+    else:
+        indi = 'BROADNIR'
+    
+    mask = arr[:,:,colorlist.index(indi)] < 500 # BNIR below 5%
     masked_arr = np.where(mask[:,:,None],np.nan, arr)
     masked_arr = masked_arr[:,:,0:len(colorlist)]
     makeTif_np_to_matching_tif(masked_arr, vrtPath, f"{vrtPath.split('.')[0]}_watermask.tif", gdalType=gdal.GDT_Float32, bands=masked_arr.shape[-1])

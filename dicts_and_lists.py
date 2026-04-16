@@ -42,3 +42,33 @@ MOLAR_MASS_AIR = 0.0289644 # kg/mol
 UNIVERSAL_GAS = 8.3144598 # J/(mol*K)
 
 SOLAR_CONST = 1367.0 # Solar constant (W/m^2)
+
+
+# for thuenen masking
+VALID_AGRO_VALUES = [
+    200, # Permanent grassland
+    1101,# Winter wheat
+    1102, # Winter barley
+    1103, # Winter rye
+    1201, # Spring barley
+    1202, # Spring oat
+    1300, # Maize
+    1401, # Potato
+    1402, # Sugar beet
+    1501, # Winter rapeseed
+    1502, # Sunflower
+    1602, # Cultivated grassland
+    1603, # Vegetables
+    1611, # Peas
+    1612, # Broad bean
+    1613, # Lupin
+    1614, # Soy
+    #3001, # Small woody features
+    3002, # Other agricultural areas
+    3003, # Fallow land
+    #3004, # Other areas
+    #3011, # Small woody features on other land
+    #4001, # Grapevine
+    4002, # Hops
+    4003, # Orchard
+]

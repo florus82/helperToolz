@@ -86,7 +86,7 @@ def transform_compositeDate_into_LSTbands(compDate, dayrange):
     return {k: v for k, v in dicti.items() if doy - dayrange_low <= k <= doy + dayrange_up}
 
 
-def growingSeasonChecker(month, lower_month=4, upper_month=10):
+def growingSeasonChecker(month, lower_month=3, upper_month=10):
     """Checks if a month is within range of set months, Returns bool
 
     Args:
@@ -1155,7 +1155,7 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
         for idx, bname in enumerate(getBandNames(S2_file)):
             if bname == 'RED':
                 red = S2_ds.GetRasterBand(1 + idx).ReadAsArray()
-            elif bname == 'BNR':
+            elif bname in ('BROADNIR', 'BNR'):
                 nir = S2_ds.GetRasterBand(1 + idx).ReadAsArray()
             else:
                 continue
@@ -1365,8 +1365,11 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
     th_arr = th_ds.GetRasterBand(1).ReadAsArray()
     mask = np.where(th_arr == -9999, 0, 1)
 
-    colors = ['BLU', 'GRN', 'RED', 'BNR', 'NIR', 'RE1', 'RE2', 'RE3',  'SW1', 'SW2']
-
+    if year in ['2018', '2022']:
+        colors = ['BLU', 'GRN', 'RED', 'BNR', 'NIR', 'RE1', 'RE2', 'RE3',  'SW1', 'SW2']
+    else:
+        colors = ['BLUE', 'GREEN', 'RED',  'BROADNIR', 'NIR', 'REDEDGE1', 'REDEDGE2', 'REDEDGE3', 'SWIR1', 'SWIR2']
+    
     # ################ load force and vrt
     path_to_S2_tiles = f'{path_to_force}/{year}/'
     
