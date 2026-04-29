@@ -72,3 +72,14 @@ VALID_AGRO_VALUES = [
     4002, # Hops
     4003, # Orchard
 ]
+
+
+PLANCK = 6.62607015e-34      # Planck constant (J·s)
+SPEEDL = 299792458.0         # speed of light (m/s)
+BOLTZ = 1.380649e-23        # Boltzmann constant (J/K)
+
+SLSTR_BANDS = {
+    "S7": 3.742e-6,
+    "S8": 10.854e-6,
+    "S9": 12.023e-6
+}

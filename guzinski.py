@@ -839,7 +839,7 @@ def runSharpi(highResFilename, lowResFilename, lowResMaskFilename, cv, movWin, r
                     "lowResGoodQualityFlags":     [1],
                     "cvHomogeneityThreshold":     cv,
                     "movingWindowSize":           movWin,
-                    "disaggregatingTemperature":  True}
+                    "disaggregatingTemperature":  False}
     dtOpts =     {"perLeafLinearRegression":    True,
                     "linearRegressionExtrapolationRatio": round(regrat, 2)}
     sknnOpts =   {'hidden_layer_sizes':         (10,),
@@ -1620,7 +1620,7 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
 
             # get S2 bands
             tilesS2 = [file for file in getFilelist(path_to_S2_tiles, '.tif', deep=True) if tile_to_process in file and f'{compDate}.tif' in file]
-            tilesS2 = [t2 for col in colors for t2 in tilesS2 if col in t2]
+            tilesS2 = [t2 for col in colors for t2 in tilesS2 if f"_{col}_" in t2]
             S2_path = f'{temp_dump_fold}S2_{compDate}.vrt'
             
             # build vrt

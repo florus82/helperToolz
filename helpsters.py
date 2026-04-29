@@ -3,6 +3,7 @@ import pandas as pd
 from osgeo import gdal
 import matplotlib.pyplot as plt
 import geopandas as gpd
+from shapely.geometry import Point, Polygon
 #import higra as hg
 import os
 import xarray as xr 
@@ -25,6 +26,9 @@ if 'xdem' not in envdir and 'cds_era5' not in envdir and 's3stac' not in envdir:
     import shutil
     sys.path.append('/media/')
     from helperToolz.helper import *
+else:
+    sys.path.append('/home/potzschf/repos/')
+    from helperToolz.dicts_and_lists import SLSTR_BANDS, PLANCK, BOLTZ, SPEEDL
 
 #####################################################################################
 #####################################################################################
@@ -1968,3 +1972,119 @@ def clear_directory(path):
                 shutil.rmtree(file_path)
         except Exception as e:
             print(f"Failed to delete {file_path}. Reason: {e}")
+
+
+def getRasCellFromXY(X, Y, raster):
+    if type(raster) is str:
+        ras = gdal.Open(raster)
+    elif type(raster) is gdal.Dataset:
+        ras = raster
+    gt  = ras.GetGeoTransform()
+    col = int((X - gt[0]) / gt[1]
+              )
+    row = int((Y - gt[3]) / gt[5])
+    return([col, row])
+
+def boundingCentroidCoord(X, Y, celldim):
+    if type(X) is not list:
+        XX, YY = [X], [Y]
+    else:
+        XX, YY = X, Y
+    k = ['ulX', 'ulY', 'urX', 'urY', 'lrX', 'lrY', 'llX', 'llY']
+    v = [[], [], [], [], [], [], [], []]
+    res = dict(zip(k, v))
+    for i in XX:
+
+        res['ulX'].append(i - celldim/2)
+        res['urX'].append(i + celldim/2)
+        res['lrX'].append(i + celldim/2)
+        res['llX'].append(i - celldim/2)
+
+    for j in YY:
+        res['ulY'].append(j + celldim / 2)
+        res['urY'].append(j + celldim / 2)
+        res['lrY'].append(j - celldim / 2)
+        res['llY'].append(j - celldim / 2)
+
+    return res
+
+def XYtoShape_gpd(XYdict, attributes, epsg, storpath=None, name=None, Stype="point"):
+    """
+    Create points or polygons from XY dictionaries + attributes using GeoPandas.
+    If storpath is None -> returns GeoDataFrame in memory only.
+    This a conversion from my old XYtoShape function
+    """
+
+    geoms = []
+
+    if Stype == "point":
+        xkey, ykey = list(XYdict.keys())[:2]
+
+        for i in range(len(XYdict[xkey])):
+            geoms.append(Point(XYdict[xkey][i], XYdict[ykey][i]))
+
+    elif Stype == "poly":
+        for i in range(len(XYdict["ulX"])):
+
+            poly = Polygon([
+                (XYdict["ulX"][i], XYdict["ulY"][i]),
+                (XYdict["urX"][i], XYdict["urY"][i]),
+                (XYdict["lrX"][i], XYdict["lrY"][i]),
+                (XYdict["llX"][i], XYdict["llY"][i]),
+                (XYdict["ulX"][i], XYdict["ulY"][i])  # close ring
+            ])
+
+            geoms.append(poly)
+
+    else:
+        raise ValueError("Stype must be 'point' or 'poly'")
+
+
+    df = {}
+
+    for k, v in attributes.items():
+        df[k] = v
+
+    gdf = gpd.GeoDataFrame(df, geometry=geoms, crs=f"EPSG:{epsg}")
+
+    if storpath is not None:
+        if name is not None:
+            gdf.to_file(storpath, layer=name)
+        else:
+            gdf.to_file(storpath)
+    else:
+        return gdf
+    
+def radiance_to_temperature(L, wavelength):
+    """
+    L: spectral radiance (W·m⁻²·sr⁻¹·µm⁻¹)
+    wavelength: meters (e.g. SLSTR S8 = 10.854e-6)
+    returns: brightness temperature in Kelvin
+    """
+
+    L_si = L * 1e6  # convert to W·m⁻²·sr⁻¹·m⁻¹
+    L_si = np.maximum(L, 1e-12)  # avoid log(0)
+
+    term1 = (2 * PLANCK * SPEEDL**2) / (wavelength**5 * L)
+    T = (PLANCK * SPEEDL) / (wavelength * BOLTZ * np.log(term1 + 1.0))
+
+    return T
+
+
+def temperature_to_radiance(T, wavelength):
+    """
+    T: temperature in Kelvin
+    returns radiance
+    """
+
+    exponent = (PLANCK * SPEEDL) / (wavelength * BOLTZ * T)
+    L_si = (2 * PLANCK * SPEEDL**2) / (wavelength**5 * (np.exp(exponent) - 1.0))
+
+    return L_si * 1e-6
+
+
+def slstr_kelvin_to_radiance(T, band="S8"):
+    return temperature_to_radiance(T, SLSTR_BANDS[band])
+
+def slstr_radiance_to_kelvin(L, band="S8"):
+    return radiance_to_temperature(L, SLSTR_BANDS[band])
