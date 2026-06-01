@@ -3,6 +3,7 @@ from helperToolz.helpsters import *
 from helperToolz.dicts_and_lists import *
 from helperToolz.mirmazloumi import *
 import numpy as np
+import warnings
 from osgeo import gdal, osr
 gdal.UseExceptions()
 from datetime import datetime, timezone
@@ -538,7 +539,7 @@ def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, 
         # load the band that holds the observation just prior to LST acquisition
         before = era_ds.GetRasterBand(b).ReadAsArray() # changed 2026-01-12 from b-1
         # calculate the linearly interpolated values at the minute of acquisition
-        vals_interpolated = before - (before - after) * (np.array(arr_min, dtype=np.float16) / 60) # in J/m²
+        vals_interpolated = (after - before) * (np.array(arr_min, dtype=np.float16) / 60) + before # in J/m²
         # convert to W/m²
         vals_watt = vals_interpolated /3600
         arrL.append(vals_watt * mask)
@@ -669,7 +670,7 @@ def get_ssrdsc_warped_and_corrected_at_doy(path_to_ssrdsc_grib, reference_path, 
             irr_2D[valid_mask] = irradiance_tilted['poa_global']
             meanL.append(irr_2D)
 
-    ssrd_mean = np.nansum(np.dstack(meanL), axis=2) / 24 # np.nanmean(np.dstack(meanL), axis = 2)
+    ssrd_mean = np.nanmean(np.dstack(meanL), axis = 2) # np.nansum(np.dstack(meanL), axis=2) / 24
     ssrd_mean = ssrd_mean.reshape(slope.shape)
 
     daily_energy = np.nansum(np.dstack([irr_2D*3600.0 for irr_2D in meanL]), axis=2)
@@ -888,13 +889,19 @@ def runSharpi(highResFilename, lowResFilename, lowResMaskFilename, cv, movWin, r
 
 
 def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path_to_temp,
-             path_to_sharp, mvwin, cv, regrat, evap_outFolder, S2path, printInterim=False, bio=False):
+             path_to_sharp, mvwin, cv, regrat, evap_outFolder, S2path, th_arr, printInterim=False,
+             bio=False, C_HEIGHT='lai', T_HEIGHT='high', LAND_C='fix'):
 
     # storPath_c = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET_Canopy_calc.tif'
     # storPath_s = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET_Soil_calc.tif'
 
-    storPath_c_f = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET_Canopy_func.tif'
-    storPath_s_f = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET_Soil_func.tif'
+    if bio:
+        sensi_suff = f"withBio_hc{C_HEIGHT}_TMH{T_HEIGHT}_LC{LAND_C}"
+    else:
+        sensi_suff = f"withoutBio_hc{C_HEIGHT}_TMH{T_HEIGHT}_LC{LAND_C}"
+
+    storPath_c_f = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_{sensi_suff}_ET_Canopy_func.tif'
+    storPath_s_f = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_{sensi_suff}_ET_Soil_func.tif'
     
     # path to era5 raw data
     era5_path = '/data/Aldhani/eoagritwin/et/Auxiliary/ERA5/grib/'
@@ -1129,7 +1136,7 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
         npTOdisk(vza_20, LST_file, f'{temp_path_sub}VZA_masked_{id_tag}.tif', bands = 1)
 
     if bio:
-        albedo, ccc, cwc, lai, fapar, fcover = read_biophys(bio)
+        albedo, ccc, cwc, lai, fapar, fcover = read_biophys(bio, comp=comp)
         theta = np.deg2rad(szenith_20)
         theta_safe = np.clip(theta, 0.05, 1.0)
 
@@ -1148,6 +1155,13 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
             theta=theta_safe)
         LAI_np = lai
 
+        # Leaf spectral properties:{rho_vis_C: visible reflectance, tau_vis_C: visible transmittance, rho_nir_C: NIR reflectance, tau_nir_C: NIR transmittance}
+        Cab = ccc / np.maximum(lai, 1e-6)
+        Cw  = cwc / np.maximum(lai, 1e-6)
+        rho_vis_C, tau_vis_C = leaf_optics_vis(Cab)
+        rho_nir_C, tau_nir_C = leaf_optics_nir(Cw)
+
+        f_c = np.clip(fcover, 0.05, 0.99)
     else:
 
         # calculate the NDVI from the S2 composite (following formula from force --> bandnames: (NIR - RED) / (NIR + RED))
@@ -1165,14 +1179,33 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
         ndvi_20_ma = np.ma.masked_where(ndvi_20_ma < 0, ndvi_20_ma)
 
         LAI_np = 0.57*np.exp(2.33*ndvi_20)
+
+        # Leaf spectral properties:{rho_vis_C: visible reflectance, tau_vis_C: visible transmittance, rho_nir_C: NIR reflectance, tau_nir_C: NIR transmittance}
+        rho_vis_C=np.full(LAI_np.shape, 0.05, np.float32)
+        tau_vis_C=np.full(LAI_np.shape, 0.08, np.float32)
+        rho_nir_C=np.full(LAI_np.shape, 0.32, np.float32)
+        tau_nir_C=np.full(LAI_np.shape, 0.33, np.float32) 
     
+        f_c = np.ones_like(LAI_np, dtype=np.float32)
+
+
     LAI_pos = np.where(LAI_np < 0, np.nan, LAI_np)
-    # estimate canopy height from estimated LAI
-    hc = hc_from_lai(LAI_pos, hc_max = 1.2, lai_max = np.nanmax(LAI_np), hc_min=0)
+ 
+    # canopy height
+    if C_HEIGHT == 'lai':
+        hc = hc_from_lai(LAI_pos, hc_max = 1.2, lai_max = np.nanmax(LAI_np), hc_min=0)
+    else:
+        hc = np.full(LAI_pos.shape, 1.2)
+
+    # temp measurement height
+    if T_HEIGHT=='high':
+        z_T = 100
+    else:
+        z_T = 2 
 
     # estimate long wave irradiance
     ea = meteo_utils.calc_vapor_pressure(T_K=dew_temp_20)
-    L_dn = calc_longwave_irradiance(ea = ea, t_a_k = air_temp_20, p = sp_20, z_T = 100, h_C = hc) # ## does that make sense with the 100m!!!!!!!!!!!!!!!!!!!
+    L_dn = calc_longwave_irradiance(ea = ea, t_a_k = air_temp_20, p = sp_20, z_T = z_T, h_C = hc) # ## does that make sense with the 100m!!!!!!!!!!!!!!!!!!!
     d_0_0 = resistances.calc_d_0(h_C=hc)
     z_0 = resistances.calc_z_0M(h_C=hc)
 
@@ -1196,18 +1229,6 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
     S_dn_dir = ssrd_20 * (1.0 - skyl)
     S_dn_dif = ssrd_20 * skyl
 
-    # Leaf spectral properties:{rho_vis_C: visible reflectance, tau_vis_C: visible transmittance, rho_nir_C: NIR reflectance, tau_nir_C: NIR transmittance}
-
-    if bio:
-        Cab = ccc / np.maximum(lai, 1e-6)
-        Cw  = cwc / np.maximum(lai, 1e-6)
-        rho_vis_C, tau_vis_C = leaf_optics_vis(Cab)
-        rho_nir_C, tau_nir_C = leaf_optics_nir(Cw)
-    else:
-        rho_vis_C=np.full(LAI_pos.shape, 0.05, np.float32)
-        tau_vis_C=np.full(LAI_pos.shape, 0.08, np.float32)
-        rho_nir_C=np.full(LAI_pos.shape, 0.32, np.float32)
-        tau_nir_C=np.full(LAI_pos.shape, 0.33, np.float32) 
 
     # Soil spectral properties:{rho_vis_S: visible reflectance, rho_nir_S: NIR reflectance}
     rho_vis_S=np.full(LAI_pos.shape, 0.07, np.float32)
@@ -1216,11 +1237,6 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
     # F = local LAI
     F = LAI_pos / 1
     # calculate clumping index
-    if bio == False:
-        f_c = np.ones_like(LAI_pos, dtype=np.float32)
-    else:
-        f_c = np.clip(fcover, 0.05, 0.99)
-
     Omega0 = clumping_index.calc_omega0_Kustas(LAI = LAI_np, f_C = f_c, x_LAD=1)
     Omega = clumping_index.calc_omega_Kustas(Omega0, szenith_20)
     LAI_eff = F * Omega
@@ -1230,16 +1246,20 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
                                         tau_leaf_nir = tau_nir_C, rsoilv = rho_vis_S, rsoiln = rho_nir_S, x_LAD=1, LAI_eff=LAI_eff)
 
     # calculate other roughness stuff
+    if LAND_C == 'fix':
+        landC = np.full(LAI_pos.shape, 11, dtype=np.int16)
+    else:
+        unique_classes, inverse = np.unique(th_arr, return_inverse=True)
+        mapped = np.array([ROUGH_CLASSES_LKP.get(c, np.nan) for c in unique_classes])
+        landC = mapped[inverse].reshape(th_arr.shape)
 
-    landC = np.full(LAI_pos.shape, 11, dtype=np.int16)
     w_C = np.ones_like(LAI_pos, dtype=np.float32)
     
-    if bio == False:
+    if bio:
+        z_0M, d = resistances.calc_roughness(LAI=LAI_pos, h_C=hc, w_C=w_C, landcover=landC, f_c=f_c)
+    else:
         fg = calc_fg_gutman(ndvi = ndvi_20_ma, ndvi_min = np.nanmin(ndvi_20), ndvi_max = np.nanmax(ndvi_20))
         z_0M, d = resistances.calc_roughness(LAI=LAI_pos, h_C=hc, w_C=w_C, landcover=landC, f_c=None)
-    else:
-        z_0M, d = resistances.calc_roughness(LAI=LAI_pos, h_C=hc, w_C=w_C, landcover=landC, f_c=f_c)
-
     if printInterim:
         if bio == False:
             npTOdisk(ndvi_20, LST_file, f'{temp_path_sub}ndvi_{id_tag}.tif')
@@ -1266,7 +1286,6 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
     emis_S = 0.95
     h_C = hc 
     z_u = 100
-    z_T = 100
 
     output = TSEB.TSEB_PT(lst_20, vza_20, air_temp_20, wind_speed_20, ea, sp_20, Sn_C, Sn_S, L_dn, LAI_pos, h_C, emis_C, emis_S, 
     z_0M, d, z_u, z_T, resistance_form=None, calcG_params=None, const_L=None, f_g=fg,
@@ -1925,7 +1944,7 @@ def get_biophysical_parameter(path_S2, path_Sun, year, month, doy, outPath, comp
         flag_inp = varmap['sl2p_inputFlag'].astype(numpy.float32)
         flag_out = varmap['sl2p_outputFlag'].astype(numpy.float32)
 
-        outP = path_safe(f'{outPath}bio/{varName}_{comp_stat}_{year}_{month}_{doy:02d}.tif')
+        outP = path_safe(f'{outPath}bio/{varName}_{comp_stat}_{year}_{month}_{doy}.tif') # :02d
 
         # 4. Write all 4 layers
         with rasterio.open(outP, 'w', **profile) as dst:
@@ -1978,6 +1997,119 @@ def compute_fg_fipar_pai(LAI, FAPAR, theta, max_iter=20, tol=1e-4):
         # Eq. (9)
         PAI = LAI / fg
 
+    return fg, FIPAR, PAI
+
+def compute_fg_fipar_pai_claude(
+    LAI,
+    FAPAR,
+    theta,
+    extinction_coeff=0.5,
+    max_iter=100,
+    tol=1e-2,
+):
+    """
+    Vectorized computation of green fraction (fg), fraction of intercepted PAR
+    (FIPAR), and Plant Area Index (PAI), following Guzinski et al. (2020).
+ 
+    Parameters
+    ----------
+    LAI : np.ndarray
+        Leaf Area Index (m² m⁻²). Must be >= 0.
+    FAPAR : np.ndarray
+        Fraction of Absorbed Photosynthetically Active Radiation, green
+        vegetation only. Must be in [0, 1].
+    theta : np.ndarray or float
+        Solar zenith angle in radians.
+    extinction_coeff : float, optional
+        Canopy extinction coefficient G/cos(theta) numerator term. Default 0.5
+        assumes a spherical leaf angle distribution. Adjust for other canopy
+        types (e.g. planophile, erectophile canopies).
+    max_iter : int, optional
+        Maximum number of iterations. Default 20.
+    tol : float, optional
+        Convergence tolerance on fg. Iteration stops when the maximum absolute
+        change across all pixels is below this value. Default 1e-4.
+ 
+    Returns
+    -------
+    fg : np.ndarray
+        Green vegetation fraction (dimensionless, clipped to [0.01, 1]).
+    FIPAR : np.ndarray
+        Fraction of Intercepted PAR (green + non-green material).
+    PAI : np.ndarray
+        Plant Area Index (m² m⁻²), i.e. LAI including non-green elements.
+ 
+    Notes
+    -----
+    Core equations (Guzinski et al. 2020):
+        FIPAR = 1 - exp(-k * PAI / cos θ)   [Eq. 8]
+        fg    = FAPAR / FIPAR                 [Eq. 7]
+        PAI   = LAI / fg                      [Eq. 9]
+ 
+    The system is solved iteratively because FIPAR depends on PAI, which in
+    turn depends on fg. PAI is updated *inside* the loop so that each fg
+    estimate is computed from a self-consistent PAI, and FIPAR is recomputed
+    once more after convergence to ensure the three returned quantities are
+    mutually consistent.
+    """
+    # ------------------------------------------------------------------
+    # Input validation
+    # ------------------------------------------------------------------
+    LAI = np.asarray(LAI, dtype=float)
+    FAPAR = np.asarray(FAPAR, dtype=float)
+    theta = np.asarray(theta, dtype=float)
+ 
+    # if np.any(LAI < 0):
+    #     warnings.warn("LAI contains negative values; these may produce unreliable results.")
+    # if np.any((FAPAR < 0) | (FAPAR > 1)):
+    #     warnings.warn("FAPAR contains values outside [0, 1]; check your inputs.")
+ 
+    # ------------------------------------------------------------------
+    # Pre-compute stable quantities
+    # ------------------------------------------------------------------
+    cos_theta = np.cos(theta)
+    cos_theta = np.clip(cos_theta, 0.01, 1.0)   # avoid division by zero at high zenith
+ 
+    # ------------------------------------------------------------------
+    # Initial conditions
+    # ------------------------------------------------------------------
+    fg = np.ones_like(LAI)        # start assuming fully green canopy
+    PAI = LAI.copy()              # initially PAI == LAI (no non-green material)
+ 
+    converged = False
+ 
+    for _ in range(max_iter):
+        # Eq. (8): Beer-Lambert interception model
+        FIPAR = 1.0 - np.exp(-extinction_coeff * PAI / cos_theta)
+        FIPAR = np.clip(FIPAR, 1e-6, 1.0)   # guard against log/division issues
+ 
+        # Eq. (7): green fraction from ratio of absorbed to intercepted PAR
+        fg_new = FAPAR / FIPAR
+        fg_new = np.clip(fg_new, 0.01, 1.0)
+ 
+        # Eq. (9): update PAI inside the loop for self-consistency
+        PAI = LAI / fg_new
+ 
+        # Convergence check
+        if np.nanmax(np.abs(fg_new - fg)) < tol:
+            converged = True
+            fg = fg_new
+            break
+ 
+        fg = fg_new
+ 
+    if not converged:
+        warnings.warn(
+            f"compute_fg_fipar_pai did not converge within {max_iter} iterations "
+            f"(tol={tol}). Consider increasing max_iter or relaxing tol."
+        )
+ 
+    # ------------------------------------------------------------------
+    # Final recompute: ensure FIPAR is consistent with the converged PAI
+    # ------------------------------------------------------------------
+    FIPAR = 1.0 - np.exp(-extinction_coeff * PAI / cos_theta)
+    FIPAR = np.clip(FIPAR, 1e-6, 1.0)
+ 
     return fg, FIPAR, PAI
 
 
