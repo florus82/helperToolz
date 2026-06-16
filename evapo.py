@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from osgeo import gdal, osr
 gtiff_driver = gdal.GetDriverByName('GTiff')
 import sys
@@ -32,7 +32,8 @@ class LandsatETFileManager:
             year = int(filename[10:14])
             month = int(filename[14:16])
             day = int(filename[16:18])
-            date = datetime.date(year, month, day)
+            print(f"{year}-{month}-{day}")
+            date = dt.date(year, month, day)
 
             if date not in self.date_to_files:
                 self.date_to_files[date] = []

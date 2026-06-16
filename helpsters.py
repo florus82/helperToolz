@@ -138,86 +138,86 @@ def predict_on_GPU(path_to_model, list_of_row_col_indices, npdstack, batch_size=
     return preds
 
 
-# def predict_on_GPU_without_preload(path_to_model, list_of_row_col_indices, list_of_vrts, temp_path = False):
-#     '''
-#     path_to_model: path to .pth file
-#     list_of_row_col_indices: a list in the order row_start, row_end, col_start, col_end (output of get_row_col_indices). This will be used to read in small chips from npdstack
-#     list_of_vrtFiles for input stack: has to be read-in and normalized
-#     '''
+def predict_on_GPU_without_preload(path_to_model, list_of_row_col_indices, list_of_vrts, temp_path = False):
+    '''
+    path_to_model: path to .pth file
+    list_of_row_col_indices: a list in the order row_start, row_end, col_start, col_end (output of get_row_col_indices). This will be used to read in small chips from npdstack
+    list_of_vrtFiles for input stack: has to be read-in and normalized
+    '''
 
-#     normalizer = AI4BNormal_S2()
+    normalizer = AI4BNormal_S2()
 
-#     row_start = list_of_row_col_indices[0]
-#     row_end   = list_of_row_col_indices[1]
-#     col_start = list_of_row_col_indices[2]
-#     col_end   = list_of_row_col_indices[3]
+    row_start = list_of_row_col_indices[0]
+    row_end   = list_of_row_col_indices[1]
+    col_start = list_of_row_col_indices[2]
+    col_end   = list_of_row_col_indices[3]
 
-#     # define the model (.pth) and assess loss curves
-#     #model_name = dataFolder + 'output/models/model_state_All_but_LU_transformed_42.pth'
-#     model_name_short = path_to_model.split('/')[-1].split('.')[0]
+    # define the model (.pth) and assess loss curves
+    #model_name = dataFolder + 'output/models/model_state_All_but_LU_transformed_42.pth'
+    model_name_short = path_to_model.split('/')[-1].split('.')[0]
  
-#     NClasses = 1
-#     nf = 96
-#     verbose = True
-#     model_config = {'in_channels': 4,
-#                     'spatial_size_init': (128, 128),
-#                     'depths': [2, 2, 5, 2],
-#                     'nfilters_init': nf,
-#                     'nheads_start': nf // 4,
-#                     'NClasses': NClasses,
-#                     'verbose': verbose,
-#                     'segm_act': 'sigmoid'}
+    NClasses = 1
+    nf = 96
+    verbose = True
+    model_config = {'in_channels': 4,
+                    'spatial_size_init': (128, 128),
+                    'depths': [2, 2, 5, 2],
+                    'nfilters_init': nf,
+                    'nheads_start': nf // 4,
+                    'NClasses': NClasses,
+                    'verbose': verbose,
+                    'segm_act': 'sigmoid'}
 
-#     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-#     if torch.cuda.is_available():
-#         modeli = ptavit3d_dn(**model_config).to(device)
-#         modeli.load_state_dict(torch.load(path_to_model))
-#         model = modeli.to(device) # Set model to gpu
-#         model.eval()
+    if torch.cuda.is_available():
+        modeli = ptavit3d_dn(**model_config).to(device)
+        modeli.load_state_dict(torch.load(path_to_model))
+        model = modeli.to(device) # Set model to gpu
+        model.eval()
         
-#     preds = []
+    preds = []
 
-#     for i in range(len(row_end)):
-#         for j in range(len(col_end)):
-#             bands = []
-#             for vrt in list_of_vrts:
-#                 ds = gdal.Open(vrt, gdal.GA_ReadOnly)
-#                 bands.append(
-#                     ds.GetRasterBand(1).ReadAsArray(col_start[j], row_start[i], col_end[j] - col_start[j], row_end[i] - row_start[i])
-#                 )
-#             cube = np.dstack(bands)  # (y, x, bands)
+    for i in range(len(row_end)):
+        for j in range(len(col_end)):
+            bands = []
+            for vrt in list_of_vrts:
+                ds = gdal.Open(vrt, gdal.GA_ReadOnly)
+                bands.append(
+                    ds.GetRasterBand(1).ReadAsArray(col_start[j], row_start[i], col_end[j] - col_start[j], row_end[i] - row_start[i])
+                )
+            cube = np.dstack(bands)  # (y, x, bands)
 
-#             data_cube = np.transpose(cube, (2, 0, 1))
-#             reshaped_cube = data_cube.reshape(4, 6, cube.shape[0], cube.shape[1])
+            data_cube = np.transpose(cube, (2, 0, 1))
+            reshaped_cube = data_cube.reshape(4, 6, cube.shape[0], cube.shape[1])
             
-#             norm_cube = normalizer(reshaped_cube)
+            norm_cube = normalizer(reshaped_cube)
 
-#             image = torch.tensor(norm_cube) # npdstack[np.newaxis, :, :, row_start[i]:row_end[i], col_start[j]:col_end[j]])
-#             image = image.to(torch.float)
-#             image = image.unsqueeze(0).to(device)  # Move image to the correct device
+            image = torch.tensor(norm_cube) # npdstack[np.newaxis, :, :, row_start[i]:row_end[i], col_start[j]:col_end[j]])
+            image = image.to(torch.float)
+            image = image.unsqueeze(0).to(device)  # Move image to the correct device
         
-#             with torch.no_grad():
-#                 pred = model(image)
-#                 preds.append(pred.detach().cpu().numpy())
+            with torch.no_grad():
+                pred = model(image)
+                preds.append(pred.detach().cpu().numpy())
 
-#                 print(f"{i} from {len(row_end)} and {j} from {len(col_end)}")
+                print(f"{i} from {len(row_end)} and {j} from {len(col_end)}")
                 
-#     torch.cuda.empty_cache()
-#     del model
-#     del modeli
-#     del device
-#     del image
+    torch.cuda.empty_cache()
+    del model
+    del modeli
+    del device
+    del image
 
-#     if temp_path:
-#         with open(path_safe(f'{temp_path}preds.pkl'), 'wb') as f:
-#             pickle.dump(preds, f)
+    if temp_path:
+        with open(path_safe(f'{temp_path}preds.pkl'), 'wb') as f:
+            pickle.dump(preds, f)
 
-#     # Load again
-#     # with open(f'{temp_path}preds.pkl', 'rb') as f:
-#     #     preds = pickle.load(f)
+    # Load again
+    # with open(f'{temp_path}preds.pkl', 'rb') as f:
+    #     preds = pickle.load(f)
 
-#     return preds
+    return preds
 
 
 def export_GPU_predictions(list_of_predictions, path_to_mask, vrt_path, list_of_row_col_indices, out_path, chipsize, overlap):
@@ -1914,10 +1914,9 @@ def silent(func, *args, **kwargs):
         return func(*args, **kwargs)
     
 def path_safe(path):
-    """when storing a file, this function makes sure that the directory exists, where file will be stored
-
-    Args:
-        path (str): path to file (or directory)
+    """
+    when storing a file, this function makes sure that the directory exists, where file will be stored
+    path:path to file (or directory)
     """
     if os.path.splitext(path)[1]: # checks if path points to a file
             dir_path = os.path.dirname(path)
@@ -1975,6 +1974,11 @@ def clear_directory(path):
 
 
 def getRasCellFromXY(X, Y, raster):
+    """
+    Returns a list with the row and col (relative to the input raster),
+    in which the X and Y coordinate falls
+    NO CRS CHECK IS PERFORMED
+    """
     if type(raster) is str:
         ras = gdal.Open(raster)
     elif type(raster) is gdal.Dataset:
@@ -2088,3 +2092,106 @@ def slstr_kelvin_to_radiance(T, band="S8"):
 
 def slstr_radiance_to_kelvin(L, band="S8"):
     return radiance_to_temperature(L, SLSTR_BANDS[band])
+
+
+def date_format_to_regex(dateStringFormat):
+    """
+    Takes a dateFormat (e.g. XXXX_MM_DD), and returns the regex search term for it
+   
+    """
+
+    MONTH_NAME = (
+    r"(?:"
+    r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|"
+    r"May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|"
+    r"Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?"
+    r")"
+    )
+    
+    tokens = {
+        "XXXX": r"(?P<year>\d{4})",
+        "MM": rf"(?P<month>\d{{2}}|{MONTH_NAME})",
+        "M": rf"(?P<month>\d{{1,2}}|{MONTH_NAME})",
+        "DD": r"(?P<day>\d{2})",
+        "D": r"(?P<day>\d{1,2})",
+    }
+
+    out = []
+    i = 0
+    
+    while i < len(dateStringFormat):
+
+        # longest match first
+        if dateStringFormat.startswith("XXXX", i):
+            out.append(tokens["XXXX"])
+            i += 4
+        elif dateStringFormat.startswith("MM", i):
+            out.append(tokens["MM"])
+            i += 2
+        elif dateStringFormat.startswith("DD", i):
+            out.append(tokens["DD"])
+            i += 2
+        elif dateStringFormat.startswith("M", i):
+            out.append(tokens["M"])
+            i += 1
+        elif dateStringFormat.startswith("D", i):
+            out.append(tokens["D"])
+            i += 1
+        # else:
+        #     out.append(re.escape(dateStringFormat[i]))
+        #     i += 1
+        elif dateStringFormat[i] == "_":
+            out.append(r"[_-]")
+            i += 1
+
+        else:
+            out.append(re.escape(dateStringFormat[i]))
+            i += 1
+  
+    return r"(?<!\d)" + "".join(out) + r"(?!\d)"
+    #return "(?i)^" + "".join(out) + "$"
+
+
+def normalize_match(regMatch):
+    """
+    Converts a regex match object to YYYY_MM_DD.
+    """
+
+    MONTH_MAP = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+    }
+    d = regMatch.groupdict()
+
+    year = int(d["year"])
+
+    month = d["month"]
+    if month.isdigit():
+        month = int(month)
+    else:
+        month = MONTH_MAP[month.lower()]
+
+    day = int(d["day"])
+
+    return f"{year:04d}_{month:02d}_{day:02d}"
