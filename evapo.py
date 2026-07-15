@@ -354,134 +354,142 @@ def Sharp_Evap_Sensi(tile_to_process, storFolder, path_to_slope, path_to_aspect,
                     if movWinL:
                         # create combination lists of 3 parameter for easier looping (with this if else condition here)
                         combos = [(mov, cv, reg) for mov in movWinL for cv in cvL for reg in regratL]
-                        movWinL, cvL, regratL = map(list, zip(*combos))
+                        _movWinL, _cvL, _regratL = map(list, zip(*combos))
                     else:
-                        movWinL = [15]
-                        cvL = [0]
-                        regratL = [25]
+                        _movWinL = [15]
+                        _cvL = [0]
+                        _regratL = [25]
 
-                    for movWin, cv, regrat in zip(movWinL, cvL, regratL):
-                            # first check if already sharpened or evaped
-                            skipper_counter = 0
-                            for predi in predList: # different predictor combinations for the sharpening
-                                skip_pred = 0
-                                skip_sharp = 0
-                                if S2mask == 1:
-                                    expected_evap_files = [
-                                        f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
-                                        f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Soil_func.tif"
-                                    ]
-                                    expected_sharp_files = [
-                                        f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}.tif"
-                                    ]
-                                elif S2mask == 2:
-                                    expected_evap_files = [
-                                        f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
-                                        f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Soil_func.tif"
-                                    ]
-                                    expected_sharp_files = [
-                                        f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}.tif"
-                                    ]
-                                elif S2mask == 3:
-                                    expected_evap_files = [
-                                        f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
-                                        f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Soil_func.tif",
-                                        f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
-                                        f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Soil_func.tif"
-                                    ]
-                                    expected_sharp_files = [
-                                        f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}.tif",
-                                        f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}.tif"
-                                    ]
+                    
+                    # first check if already sharpened or evaped
+                    skipper_counter = 0
+                    for predi in predList: # different predictor combinations for the sharpening
+                        for movWin, cv, regrat in zip(_movWinL, _cvL, _regratL):
+                            skip_pred = 0
+                            skip_sharp = 0
+                            if S2mask == 1:
+                                expected_evap_files = [
+                                    f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                                    f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Soil_func.tif"
+                                ]
+                                expected_sharp_files = [
+                                    f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}.tif"
+                                ]
+                            elif S2mask == 2:
+                                expected_evap_files = [
+                                    f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                                    f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Soil_func.tif"
+                                ]
+                                expected_sharp_files = [
+                                    f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}.tif"
+                                ]
+                            elif S2mask == 3:
+                                expected_evap_files = [
+                                    f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                                    f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Soil_func.tif",
+                                    f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                                    f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Soil_func.tif"
+                                ]
+                                expected_sharp_files = [
+                                    f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}.tif",
+                                    f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}.tif"
+                                ]
 
-                                # if all expected evapo estimates are there, skip this file
-                                if all(os.path.exists(path) for path in expected_evap_files):
-                                    print('combi already processed', flush=True)
-                                    skip_pred = 1
-                                    skipper_counter += 1
+                            # if all expected evapo estimates are there, skip this file
+                            if all(os.path.exists(path) for path in expected_evap_files):
+                                print('combi already processed', flush=True)
+                                skip_pred = 1
+                                skipper_counter += 1
 
-                                # if there is a problem with computing this day, skip this file
-                                elif any(os.path.exists(errorlog) for errorlog in 
-                                            [f"{trash_path}ERROR_{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET.log",
-                                            f"{trash_path}ERROR_{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET.log"]):
-                                    print('evaping this day not possible')
-                                    skip_pred = 1
-                                    skipper_counter += 1
+                            # if there is a problem with computing this day, skip this file
+                            elif any(os.path.exists(errorlog) for errorlog in 
+                                        [f"{trash_path}ERROR_{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET.log",
+                                        f"{trash_path}ERROR_{comp_stat}_{year}_{month}_{band}_mvwin{movWin}_cv{cv}_regrat{regrat}_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET.log"]):
+                                print('evaping this day not possible')
+                                skip_pred = 1
+                                skipper_counter += 1
 
-                                # if not all evapo estimates exist, but all sharpened files, transfer sharpened files into queue for processing without sharpening again
+                            # if not all evapo estimates exist, but all sharpened files, transfer sharpened files into queue for processing without sharpening again
+                            else:
+                                if all(os.path.exists(path) for path in expected_sharp_files):
+                                    print('combi already shapred - pass on to evap queue', flush=True)
+                                    for sharpedFile in expected_sharp_files:
+                                        sharpList.append(sharpedFile)
+                                        print(sharpedFile)
+                                    skip_sharp = 1
+                        
+                            if skip_sharp or skip_pred == 1:
+                                continue
+                            if predi == 'allpred':
+                                # calculate incidence    
+                                calc_Incidence(tile=tile_to_process, year=year, comp=comp_stat, outFolder=temp_dump_fold, time_dict=band_dict) 
+                                incid_path = f'{temp_dump_fold}INCIDENCE_{comp_stat}_{year}_{month}_{band:02d}.tif'
+                                gdal.BuildVRT(highRes_path, [S2_path, slope_path, aspect_path, incid_path], separate=True)
+                                maskVRT_water(highRes_path, colorlist=colors)
+
+                                WATER_MASK = True
+
+                            else:
+                                gdal.BuildVRT(highRes_path, [S2_path], separate=True)
+                                maskVRT_water(highRes_path, colorlist=colors)
+                                # maskVRT_water_and_drop_aux(highRes_path, colorlist=colors)
+                                WATER_MASK = True
+                                
+                            if S2mask == 1:
+                                highRes_files.append(f"{highRes_path.split('.')[0]}_watermask.tif")
+                                highRes_names.append(f'S2notMasked_{predi}')
+                                lowRes_files.append(daily_lst_path)
+
+                            elif S2mask == 2:
+                                maskVRT(f"{highRes_path.split('.')[0]}_watermask.tif", mask, suffix=f"_S2_agromask_{predi}")
+                                os.remove(f"{highRes_path.split('.')[0]}_watermask.tif")
+                                highRes_files.append(f"{highRes_path.split('.')[0]}_watermask_S2_agromask_{predi}.tif")
+                                lowRes_files.append(daily_lst_path)
+                                highRes_names.append(f"S2Masked_{predi}")
+
+                            elif S2mask == 3:
+                                highRes_files.append(f"{highRes_path.split('.')[0]}_watermask.tif")
+                                highRes_names.append(f"S2notMasked_{predi}")
+                                lowRes_files.append(daily_lst_path)
+                                maskVRT(f"{highRes_path.split('.')[0]}_watermask.tif", mask, suffix=f"_S2_agromask_{predi}")
+                                highRes_files.append(f"{highRes_path.split('.')[0]}_watermask_S2_agromask_{predi}.tif")
+                                lowRes_files.append(daily_lst_path)
+                                highRes_names.append(f"S2Masked_{predi}")
+
+
+                    if skipper_counter != len(predList): # i.e. there are evap estimations in the pipeline
+                        if path_to_dem:
+                            # check if bio products are already there
+                            if os.path.exists(f"{temp_dump_fold}bio/"):
+                                if len([bfile for bfile in getFilelist(f"{temp_dump_fold}bio/", '.tif') if f"{comp_stat}_{year}_{month}_{band:02d}" in bfile]) == 6:
+                                    bio = 1
                                 else:
-                                    if all(os.path.exists(path) for path in expected_sharp_files):
-                                        print('combi already shapred - pass on to evap queue', flush=True)
-                                        for sharpedFile in expected_sharp_files:
-                                            sharpList.append(sharpedFile)
-                                            print(sharpedFile)
-                                        skip_sharp = 1
-                            
-                                if skip_sharp or skip_pred == 1:
-                                    continue
-                                if predi == 'allpred':
-                                    # calculate incidence    
-                                    calc_Incidence(tile=tile_to_process, year=year, comp=comp_stat, outFolder=temp_dump_fold, time_dict=band_dict) 
-                                    incid_path = f'{temp_dump_fold}INCIDENCE_{comp_stat}_{year}_{month}_{band:02d}.tif'
-                                    gdal.BuildVRT(highRes_path, [S2_path, slope_path, aspect_path, incid_path], separate=True)
-                                    maskVRT_water(highRes_path, colorlist=colors)
-                                else:
-                                    gdal.BuildVRT(highRes_path, [S2_path], separate=True)
-                                    maskVRT_water(highRes_path, colorlist=colors)
-                                    # maskVRT_water_and_drop_aux(highRes_path, colorlist=colors)
+                                    bio = 0
+                            else:
+                                bio = 0
 
-                                if S2mask == 1:
-                                    highRes_files.append(f"{highRes_path.split('.')[0]}_watermask.tif")
-                                    highRes_names.append(f'S2notMasked_{predi}')
-                                    lowRes_files.append(daily_lst_path)
-
-                                elif S2mask == 2:
-                                    maskVRT(f"{highRes_path.split('.')[0]}_watermask.tif", mask, suffix=f"_S2_agromask_{predi}")
-                                    os.remove(f"{highRes_path.split('.')[0]}_watermask.tif")
-                                    highRes_files.append(f"{highRes_path.split('.')[0]}_watermask_S2_agromask_{predi}.tif")
-                                    lowRes_files.append(daily_lst_path)
-                                    highRes_names.append(f"S2Masked_{predi}")
-
-                                elif S2mask == 3:
-                                    highRes_files.append(f"{highRes_path.split('.')[0]}_watermask.tif")
-                                    highRes_names.append(f"S2notMasked_{predi}")
-                                    lowRes_files.append(daily_lst_path)
-                                    maskVRT(f"{highRes_path.split('.')[0]}_watermask.tif", mask, suffix=f"_S2_agromask_{predi}")
-                                    highRes_files.append(f"{highRes_path.split('.')[0]}_watermask_S2_agromask_{predi}.tif")
-                                    lowRes_files.append(daily_lst_path)
-                                    highRes_names.append(f"S2Masked_{predi}")
-                            if skipper_counter != len(predList): # i.e. there are evap estimations in the pipeline
-                                if path_to_dem:
-
-                                    # check if bio products are already there
-                                    if os.path.exists(f"{temp_dump_fold}bio/"):
-                                        if len([bfile for bfile in getFilelist(f"{temp_dump_fold}bio/", '.tif') if f"{comp_stat}_{year}_{month}_{band:02d}" in bfile]) == 6:
-                                            bio = 1
-                                        else:
-                                            bio = 0
+                            # if bio is not there, check if sun already there
+                            if bio == 0:
+                                if os.path.exists(f"{temp_dump_fold}sun/"):
+                                    if len([sfile for sfile in getFilelist(f"{temp_dump_fold}sun/", '.tif') if f"{comp_stat}_{year}_{month}_{band:02d}" in sfile]) == 4:
+                                        sun = 1
                                     else:
-                                        bio = 0
-
-                                    # if bio is not there, check if sun already there
-                                    if bio == 0:
-                                        if os.path.exists(f"{temp_dump_fold}sun/"):
-                                            if len([sfile for sfile in getFilelist(f"{temp_dump_fold}sun/", '.tif') if f"{comp_stat}_{year}_{month}_{band:02d}" in sfile]) == 4:
-                                                sun = 1
-                                            else:
-                                                sun = 0
-                                        # if sun not there, calc it           
-                                        if sun == 0: # 
-                                            # calculate biophysical helper and parameter
-                                            try:
-                                                calc_biophys_helper(acq_path=path_to_acq, dem_path=dem_path, lat_path=lat_path, lon_path=lon_path,
-                                                                    vaa_path=path_to_vaa, vza_path=path_to_vza, year=year, month=month,
-                                                                    doy=band, outPath=temp_dump_fold, comp_stat=comp_stat)
-                                            except Exception as e:
-                                                print(f'broken because: {e} path_dem={path_to_dem} comp={comp_stat} month={month} day={band} tile={tile_to_process}')
-                                                #break
-                                        # calc bio
-                                        get_biophysical_parameter(path_S2=tilesS2, path_Sun=f"{temp_dump_fold}sun/", year=year, month=month, doy=f"{band:02d}",
-                                                                outPath=temp_dump_fold, comp_stat=comp_stat)
+                                        sun = 0
+                                else:
+                                    sun = 0
+                                # if sun not there, calc it           
+                                if sun == 0: # 
+                                    # calculate biophysical helper and parameter
+                                    try:
+                                        calc_biophys_helper(acq_path=path_to_acq, dem_path=dem_path, lat_path=lat_path, lon_path=lon_path,
+                                                            vaa_path=path_to_vaa, vza_path=path_to_vza, year=year, month=month,
+                                                            doy=band, outPath=temp_dump_fold, comp_stat=comp_stat)
+                                    except Exception as e:
+                                        print(f'broken because: {e} path_dem={path_to_dem} comp={comp_stat} month={month} day={band} tile={tile_to_process}')
+                                        #break
+                                # calc bio
+                                get_biophysical_parameter(path_S2=tilesS2, path_Sun=f"{temp_dump_fold}sun/", year=year, month=month, doy=f"{band:02d}",
+                                                        outPath=temp_dump_fold, comp_stat=comp_stat)
             if len(highRes_files) != 0:
                 for idx, highResFilename in enumerate(highRes_files):
                     lowResFilename = lowRes_files[idx]
@@ -516,12 +524,13 @@ def Sharp_Evap_Sensi(tile_to_process, storFolder, path_to_slope, path_to_aspect,
                     tile = '_'.join(sharped.split('/')[-1].split('.')[0].split('_')[-2:])
 
                     if path_to_dem:
-                        bio_pars = [file for file in getFilelist(f'{temp_dump_fold}bio/', '.tif') if f'{year}_{month}_{day}.tif' in file]
+                        bio_pars = [file for file in getFilelist(f'{temp_dump_fold}bio/', '.tif') if f'{year}_{month}_{day:02d}.tif' in file]
                     else:
                         bio_pars = False
 
                     # Sensitivity
                     bioL=[False, bio_pars] 
+                    print(bioL)
                     C_HEIGHTL=['lai','fix']
                     T_HEIGHTL=['high','low']
                     LAND_CL=['fix','th']
@@ -532,20 +541,21 @@ def Sharp_Evap_Sensi(tile_to_process, storFolder, path_to_slope, path_to_aspect,
         
                         # check if file already produced
                         if bio:
-                            sensi_suff = f"withBio_hc{C_HEIGHT}_TMH{T_HEIGHT}_LC{LAND_C}"
+                            sensi_stuff = f"withBio_hc{C_HEIGHT}_TMH{T_HEIGHT}_LC{LAND_C}"
                         else:
-                            sensi_suff = f"withoutBio_hc{C_HEIGHT}_TMH{T_HEIGHT}_LC{LAND_C}"
+                            sensi_stuff = f"withoutBio_hc{C_HEIGHT}_TMH{T_HEIGHT}_LC{LAND_C}"
 
-                            storPath_c_f = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_{sensi_suff}_ET_Canopy_func.tif'
-                            storPath_s_f = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_{sensi_suff}_ET_Soil_func.tif'
-                            
-                            if os.path.exists(storPath_c_f) and os.path.exists(storPath_s_f):
-                                continue
-                            else:
-                                runEvapi(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
-                                        tempDir=trash_path, path_to_temp=temp_dump_fold, path_to_sharp=sharp_outFolder, mvwin=mvwin, cv=cv,
-                                        regrat=regrat, evap_outFolder=evap_outFolder, S2path=S2_path, th_arr=th_arr, printInterim=printEvapInter,
-                                        bio=bio, C_HEIGHT=C_HEIGHT, T_HEIGHT=T_HEIGHT, LAND_C=LAND_C)
+                        print(sensi_stuff)
+                        storPath_c_f = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_{sensi_stuff}_ET_Canopy_func.tif'
+                        storPath_s_f = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_{sensi_stuff}_ET_Soil_func.tif'
+                        
+                        if os.path.exists(storPath_c_f) and os.path.exists(storPath_s_f):
+                            continue
+                        else:
+                            runEvapi(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
+                                    tempDir=trash_path, path_to_temp=temp_dump_fold, path_to_sharp=sharp_outFolder, mvwin=mvwin, cv=cv,
+                                    regrat=regrat, evap_outFolder=evap_outFolder, S2path=S2_path, th_arr=th_arr, printInterim=printEvapInter,
+                                    bio=bio, C_HEIGHT=C_HEIGHT, T_HEIGHT=T_HEIGHT, LAND_C=LAND_C)
                     
             
             killDates = [f"{year}_{v['month']}_{v['band']:02d}" for k, v in band_dict.items()]
@@ -553,9 +563,9 @@ def Sharp_Evap_Sensi(tile_to_process, storFolder, path_to_slope, path_to_aspect,
             [os.remove(file) for file in getFilelist(temp_dump_fold, '.vrt') if any(kill in file for kill in killDates)]
             [os.remove(file) for file in getFilelist(temp_dump_fold, '.tif') if any(kill in file for kill in killDates)]
 
-            if path_to_dem:
-                [os.remove(file) for file in getFilelist(f"{temp_dump_fold}bio/", '.tif') if any(kill in file for kill in killDates)]
-                [os.remove(file) for file in getFilelist(f"{temp_dump_fold}sun/", '.tif') if any(kill in file for kill in killDates)]
+            # if path_to_dem:
+            #     [os.remove(file) for file in getFilelist(f"{temp_dump_fold}bio/", '.tif') if any(kill in file for kill in killDates)]
+            #     [os.remove(file) for file in getFilelist(f"{temp_dump_fold}sun/", '.tif') if any(kill in file for kill in killDates)]
 
             [os.remove(file) for file in getFilelist(sharp_outFolder, '.tif', deep=True) if any(kill in file for kill in killDates)]
 

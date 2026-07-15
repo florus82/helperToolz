@@ -889,7 +889,7 @@ def runSharpi(highResFilename, lowResFilename, lowResMaskFilename, cv, movWin, r
 
 
 def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path_to_temp,
-             path_to_sharp, mvwin, cv, regrat, evap_outFolder, S2path, th_arr, printInterim=False,
+             path_to_sharp, mvwin, cv, regrat, evap_outFolder, S2path, th_arr=False, printInterim=False,
              bio=False, C_HEIGHT='lai', T_HEIGHT='high', LAND_C='fix'):
 
     # storPath_c = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET_Canopy_calc.tif'
