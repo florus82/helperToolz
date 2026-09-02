@@ -69,7 +69,7 @@ def transform_compositeDate_into_LSTbands(compDate, dayrange):
     # check for the special case, when compDate is YYYY0406 and dayrange == 4 as with this setting 1 April would not be processed
     # due to the FORCE processing with TSI at 9 day intervall that happened
     if (add_to_april == 1 and doy == 97) or (add_to_april == 0 and doy == 96):
-        dayrange_low = dayrange + 1
+        dayrange_low = dayrange # + 1
         dayrange_up = dayrange
     else:
         dayrange_low = dayrange
@@ -840,7 +840,7 @@ def runSharpi(highResFilename, lowResFilename, lowResMaskFilename, cv, movWin, r
                     "lowResGoodQualityFlags":     [1],
                     "cvHomogeneityThreshold":     cv,
                     "movingWindowSize":           movWin,
-                    "disaggregatingTemperature":  False}
+                    "disaggregatingTemperature":  True}
     dtOpts =     {"perLeafLinearRegression":    True,
                     "linearRegressionExtrapolationRatio": round(regrat, 2)}
     sknnOpts =   {'hidden_layer_sizes':         (10,),
@@ -888,7 +888,7 @@ def runSharpi(highResFilename, lowResFilename, lowResMaskFilename, cv, movWin, r
     # print(time.time() - start_time, "seconds")
 
 
-def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path_to_temp,
+def runEvapi_Sensi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path_to_temp,
              path_to_sharp, mvwin, cv, regrat, evap_outFolder, S2path, th_arr=False, printInterim=False,
              bio=False, C_HEIGHT='lai', T_HEIGHT='high', LAND_C='fix'):
 
@@ -1314,6 +1314,429 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
     npTOdisk(et_daily_c, LST_file, storPath_c_f)
     npTOdisk(et_daily_s, LST_file, storPath_s_f)
 
+def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path_to_temp,
+             path_to_sharp, mvwin, cv, regrat, evap_outFolder, S2path, th_arr=False, printInterim=False):
+
+    storPath_c = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET_Canopy_func.tif'
+    storPath_s = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET_Soil_func.tif'
+
+    # path to era5 raw data
+    era5_path = '/data/Aldhani/eoagritwin/et/Auxiliary/ERA5/grib/'
+    # ssrd_mean_path = '/data/Aldhani/eoagritwin/et/Auxiliary/ERA5/ssrd_mean_calc/'
+
+    # the DEM, SLOPE, ASPECT, LAT, LON will be used to sharpen some of the era5 variables (the the resolution of the DEM)
+    dem_path = '/data/Aldhani/eoagritwin/et/Auxiliary/DEM/vrt_and_derivates/DEM_GER.vrt' # epsg 4326
+    slope_path = '/data/Aldhani/eoagritwin/et/Auxiliary/DEM/vrt_and_derivates/SLOPE_GER_FORCE.tif' # epsg 4326
+    aspect_path = '/data/Aldhani/eoagritwin/et/Auxiliary/DEM/vrt_and_derivates/ASPECT_GER_FORCE.tif' # epsg 4326
+    lat_path = '/data/Aldhani/eoagritwin/et/Auxiliary/DEM/vrt_and_derivates/LAT_GER.tif' # epsg 4326
+    lon_path = '/data/Aldhani/eoagritwin/et/Auxiliary/DEM/vrt_and_derivates/LON_GER.tif' # epsg 4326
+
+    # the geopotential is needed for the sharpening as well
+    geopot_path = '/data/Aldhani/eoagritwin/et/Auxiliary/ERA5/tiff/low_res/geopotential/geopotential_low_res.tif' # epsg 4326
+    
+
+    # path_base to sharpenend folder and S2_comp
+    sharp_pathbase = f'{path_to_sharp}Values/'
+    s2_pathbase = path_to_temp
+
+    # the LST acquisition time should determine which sharpened LST files are associatedto be processed (as they are associated with it)
+    LST_acq_file = f'/data/Aldhani/eoagritwin/et/Sentinel3/LST/LST_values/Acq_time/{year}/Daily_AcqTime_{comp}_{year}_{month}.tif' # epsg 4326
+
+    # the VZA at the time of LST acquisition is need
+    VZA_at_acq_file = f'/data/Aldhani/eoagritwin/et/Sentinel3/VZA/comp/{comp}/{year}/Daily_VZA_{comp}_{year}_{month}.tif' # epsg 4326
+
+    # sharpened LST
+    LST_file = f'{sharp_pathbase}{comp}_{year}_{month}_{day:02d}_{mvwin}_{cv}_{regrat}_{s2Mask}_{sharp}_{lstMask}_{tile}.tif' 
+    # for NDVI calculation (estimating LAI and others) and warping to S2 resolution, we use the S2 composite used for sharpening
+    # S2_file = [file for file in getFilelist(s2_pathbase, 'vrt', deep=False) if f'HIGHRES_{comp}_{year}_{month}_{day:02d}' in file][0]
+    S2_file = S2path# [file for file in getFilelist(s2_pathbase, 'vrt', deep=True) if 'S2' in file][0]
+
+    # find era5 file that matches the month of LST observation
+    valid_variables = sorted(list(dict.fromkeys(file.split('/')[-2] for file in getFilelist(era5_path, '.grib', deep=True) \
+                                    if not any(var in file for var in ['geopotential', 'total_column_water_vapour']))))
+
+    # get a list for those era5 files that match the year and month of the provided LST acquisition file
+    era5_path_list = find_grib_file(getFilelist(era5_path, '.grib', deep=True), LST_acq_file)
+    era5_path_list = [path for path in era5_path_list if any(variable in path for variable in valid_variables)] # era5 are epsg 4326 and still will be after warping to doy
+    temp_pressure_checker(era5_path_list)
+
+    # warp datasets needed for calculations to the spatial extent of the sharpened LST
+    LST_acq_spatial_sub = warp_raster_to_reference(source_path=LST_acq_file, reference_path=S2_file, output_path='MEM', resampling='near')
+    VZA_at_acq_file_sub = warp_raster_to_reference(source_path=VZA_at_acq_file, reference_path=S2_file, output_path='MEM', resampling='near')
+    dem_sub = warp_raster_to_reference(source_path=dem_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+    slope_sub  = warp_raster_to_reference(source_path=slope_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+    aspect_sub = warp_raster_to_reference(source_path=aspect_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+    lat_sub = warp_raster_to_reference(source_path=lat_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+    lon_sub = warp_raster_to_reference(source_path=lon_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+    geopot_sub = warp_raster_to_reference(source_path=geopot_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+
+    # print if needed
+    if printInterim:
+        if path_to_temp.endswith('/'):
+            temp_path_sub = path_safe(f"{path_to_temp}evap_interim/")
+        else:
+            temp_path_sub = path_safe(f"{path_to_temp}/evap_interim/")
+
+
+        id_tag = f'{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}'
+        LST_acq_spatial_arr = LST_acq_spatial_sub.GetRasterBand(day).ReadAsArray()
+        VZA_at_acq_file_arr = VZA_at_acq_file_sub.GetRasterBand(day).ReadAsArray()
+        dem_arr= dem_sub.GetRasterBand(1).ReadAsArray()
+        slope_arr = slope_sub.GetRasterBand(1).ReadAsArray()
+        aspect_arr = aspect_sub.GetRasterBand(1).ReadAsArray()
+        lat_arr = lat_sub.GetRasterBand(1).ReadAsArray()
+        lon_arr = lon_sub.GetRasterBand(1).ReadAsArray()
+        geopot_arr = geopot_sub.GetRasterBand(1).ReadAsArray()
+
+
+        npTOdisk(LST_acq_spatial_arr, S2_file, f'{temp_path_sub}LST_acq_spatial_sub_{id_tag}.tif', bands = 1, d_type=gdal.GDT_Int64)
+        npTOdisk(VZA_at_acq_file_arr, S2_file, f'{temp_path_sub}VZA_at_acq_file_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(dem_arr, S2_file, f'{temp_path_sub}dem_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(slope_arr, S2_file, f'{temp_path_sub}slope_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(aspect_arr, S2_file, f'{temp_path_sub}aspect_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(lat_arr, S2_file, f'{temp_path_sub}lat_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(lon_arr, S2_file, f'{temp_path_sub}lon_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(geopot_arr, S2_file, f'{temp_path_sub}geopot_sub_{id_tag}.tif', bands = 1)
+
+    # load the era5 variable into cache at LST resolution and read-in the modelled times (one time step per band)
+    for path in era5_path_list:
+        # print(f'processing {path}')
+        # check if DEM sharpener needs to be applied
+        if '100m_u_component_of_wind' in path:
+            # do the warping without sharpening
+            try:
+                wind100_u = get_warped_ERA5_at_doy(path_to_era_grib=path, reference_path=LST_acq_spatial_sub, lst_acq_file=LST_acq_spatial_sub, doy=day)
+            except Exception as e:
+                with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                    f.write(f'{e}')
+                return
+
+        elif '100m_v_component_of_wind' in path:
+                # do the warping without sharpening
+            try:
+                wind100_v = get_warped_ERA5_at_doy(path_to_era_grib=path, reference_path=LST_acq_spatial_sub, lst_acq_file=LST_acq_spatial_sub, doy=day)
+            except Exception as e:
+                with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                    f.write(f'{e}')
+                return
+        # elif 'geopotential' in path:
+        #     # do the warping without sharpening
+        #     geopot = get_warped_ERA5_at_doy(path_to_era_grib=path, lst_acq_file=LST_acq_file, doy=day)
+
+        elif 'downward' in path: # terrain correction included
+            try:
+                ssrd, szenith, sazimuth, ssrd_nc, ssrd_mean_func, daily_energy = get_ssrdsc_warped_and_corrected_at_doy(
+                    path_to_ssrdsc_grib=path, reference_path=LST_acq_spatial_sub,
+                    lst_acq_file=LST_acq_spatial_sub, doy=day,
+                    slope_path=slope_sub,                             
+                                                       aspect_path=aspect_sub,
+                                                                                dem_path=dem_sub,
+                                                                                lat_path=lat_sub,
+                                                                                lon_path=lon_sub)
+            except Exception as e:
+                with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                    f.write(f'{e}')
+                return
+            
+        elif '2m_temperature' in path: # DEM and adiabatic sharpening, following Guzinski 2021
+            try:
+                air_temp = get_warped_ERA5_at_doy(path_to_era_grib=path, reference_path=LST_acq_spatial_sub, 
+                                                lst_acq_file=LST_acq_spatial_sub, doy=day,
+                                                sharp_blendheight=100,
+                                                sharp_DEM=dem_sub,
+                                                sharp_geopot=geopot_sub,
+                                                sharp_rate=STANDARD_ADIABAT,
+                                                sharpener='adiabatic')
+            except Exception as e:
+                with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                    f.write(f'{e}')
+                return
+            
+        elif '2m_dewpoint_temperature' in path: # DEM and adiabatic sharpening, following Guzinski 2021
+            try:
+                dew_temp = get_warped_ERA5_at_doy(path_to_era_grib=path, reference_path=LST_acq_spatial_sub, 
+                                                lst_acq_file=LST_acq_spatial_sub, doy=day,
+                                                sharp_blendheight=100,
+                                                sharp_DEM=dem_sub,
+                                                sharp_geopot=geopot_sub,
+                                                sharp_rate=MOIST_ADIABAT,
+                                                sharpener='adiabatic')
+            except Exception as e:
+                with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                    f.write(f'{e}')
+                return
+            
+        else: 
+            # do warping with DEM sharpening only
+            # sanity check
+            if not 'surface_pressure' in path:
+                raise ValueError('There is and unattended ERA5 variable in the loop - CHECK!!!!')
+            else:
+                try:
+                    sp = get_warped_ERA5_at_doy(path_to_era_grib=path, reference_path=LST_acq_spatial_sub, 
+                                                lst_acq_file=LST_acq_spatial_sub, doy=day,
+                                                sharp_DEM=dem_sub,
+                                                sharp_blendheight=100,
+                                                sharp_geopot=geopot_sub,
+                                                sharp_temp=air_temp,
+                                                sharpener='barometric') / 100
+                except Exception as e:
+                    with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                        f.write(f'{e}')
+                    return
+          
+    wind_speed_20 = calc_wind_speed(wind100_u, wind100_v) # check wind_u
+    
+    # ds = gdal.Open(f'{ssrd_mean_path}surface_solar_radiation_downward_clear_sky_{year}_{int(MONTH_TO_02D[month])}')
+    # ssrd_mean = ds.GetRasterBand(day).ReadAsArray() / 3600
+    
+    # ssrd_mean_calc_20 = warp_np_to_reference(ssrd_mean, f'{ssrd_mean_path}surface_solar_radiation_downward_clear_sky_{year}_{int(MONTH_TO_02D[month])}', LST_file) # check this too!!!!!
+    ssrd_mean_func_20 = ssrd_mean_func
+    daily_energy_20 = daily_energy
+    ssrd_20 = ssrd
+    air_temp_20 = air_temp
+    dew_temp_20 = dew_temp
+    sp_20 = sp
+    szenith_20 = szenith
+    sazimuth_20 = sazimuth
+
+    # calculate windspeed
+
+    # load vza
+    vza_ds = VZA_at_acq_file_sub
+    vza_20 = vza_ds.GetRasterBand(day).ReadAsArray()
+
+    # load sharpened LST
+    lst_ds = gdal.Open(LST_file)
+    lst_20 =lst_ds.GetRasterBand(1).ReadAsArray()
+
+    del wind100_u, wind100_v, ssrd, air_temp, dew_temp, sp, szenith, sazimuth, ssrd_nc, ssrd_mean_func # , ssrd_mean
+
+    if printInterim:
+        # npTOdisk(ssrd_mean_calc_20, LST_file, f'{temp_path_sub}SSRD_mean_calc_{id_tag}.tif', bands = 1)
+        npTOdisk(ssrd_mean_func_20, LST_file, f'{temp_path_sub}SSRD_mean_func_{id_tag}.tif', bands = 1)
+        npTOdisk(daily_energy_20, LST_file, f'{temp_path_sub}Daily_Energy_{id_tag}.tif', bands = 1)
+        npTOdisk(ssrd_20, LST_file, f'{temp_path_sub}SSRD_{id_tag}.tif', bands = 1)
+        npTOdisk(air_temp_20, LST_file, f'{temp_path_sub}TEMP_{id_tag}.tif', bands = 1)
+        npTOdisk(dew_temp_20, LST_file, f'{temp_path_sub}DEW_{id_tag}.tif', bands = 1)
+        npTOdisk(sp_20, LST_file, f'{temp_path_sub}SP_{id_tag}.tif', bands = 1)
+        npTOdisk(szenith_20, LST_file, f'{temp_path_sub}ZEN_{id_tag}.tif', bands = 1)
+        npTOdisk(sazimuth_20, LST_file, f'{temp_path_sub}AZI_{id_tag}.tif', bands = 1)
+        npTOdisk(wind_speed_20, LST_file, f'{temp_path_sub}WSPEED_{id_tag}.tif', bands = 1)
+        npTOdisk(lst_20, LST_file, f'{temp_path_sub}LST_{id_tag}.tif', bands = 1)
+        npTOdisk(vza_20, LST_file, f'{temp_path_sub}VZA_{id_tag}.tif', bands = 1)
+
+    condition = (air_temp_20 > 0) & (dew_temp_20 > 0)  & (sp_20 > 0) & (szenith_20 > 0) & (sazimuth_20 > 0) & (wind_speed_20 > 0) & (lst_20 > 0) & (vza_20 > 0)
+    ssrd_20[~condition] = np.nan
+    daily_energy_20[~condition] = np.nan
+    ssrd_mean_func_20[~condition] = np.nan
+    air_temp_20[~condition] = np.nan
+    dew_temp_20[~condition] = np.nan
+    sp_20[~condition] = np.nan
+    szenith_20[~condition] = np.nan
+    sazimuth_20[~condition] = np.nan
+    wind_speed_20[~condition] = np.nan
+    # lst_20 = np.ma.masked_where(~condition, lst_20)
+    # vza_20 = np.ma.masked_where(~condition, vza_20)
+    lst_20[~condition] = np.nan
+    vza_20[~condition] = np.nan
+
+    if printInterim:
+        npTOdisk(daily_energy_20, LST_file, f'{temp_path_sub}Daily_Energy_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(ssrd_mean_func_20, LST_file, f'{temp_path_sub}SSRD_mean_func_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(ssrd_20, LST_file, f'{temp_path_sub}SSRD_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(air_temp_20, LST_file, f'{temp_path_sub}TEMP_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(dew_temp_20, LST_file, f'{temp_path_sub}DEW_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(sp_20, LST_file, f'{temp_path_sub}SP_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(szenith_20, LST_file, f'{temp_path_sub}ZEN_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(sazimuth_20, LST_file, f'{temp_path_sub}AZI_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(wind_speed_20, LST_file, f'{temp_path_sub}WSPEED_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(lst_20, LST_file, f'{temp_path_sub}LST_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(vza_20, LST_file, f'{temp_path_sub}VZA_masked_{id_tag}.tif', bands = 1)
+
+    # if bio:
+    #     albedo, ccc, cwc, lai, fapar, fcover = read_biophys(bio, comp=comp)
+    #     theta = np.deg2rad(szenith_20)
+    #     theta_safe = np.clip(theta, 0.05, 1.0)
+
+    #     lai_min = 0.1
+    #     valid = lai > lai_min
+
+    #     Cab = np.full_like(lai, np.nan, dtype=float)
+    #     Cw  = np.full_like(lai, np.nan, dtype=float)
+
+    #     Cab[valid] = ccc[valid] / lai[valid]
+    #     Cw[valid]  = cwc[valid] / lai[valid]
+
+    #     fg, FIPAR, PAI = compute_fg_fipar_pai(
+    #         LAI=lai,
+    #         FAPAR=fapar,
+    #         theta=theta_safe)
+    #     LAI_np = lai
+
+    #     # Leaf spectral properties:{rho_vis_C: visible reflectance, tau_vis_C: visible transmittance, rho_nir_C: NIR reflectance, tau_nir_C: NIR transmittance}
+    #     Cab = ccc / np.maximum(lai, 1e-6)
+    #     Cw  = cwc / np.maximum(lai, 1e-6)
+    #     rho_vis_C, tau_vis_C = leaf_optics_vis(Cab)
+    #     rho_nir_C, tau_nir_C = leaf_optics_nir(Cw)
+
+    #     f_c = np.clip(fcover, 0.05, 0.99)
+    # else:
+
+    # calculate the NDVI from the S2 composite (following formula from force --> bandnames: (NIR - RED) / (NIR + RED))
+    S2_ds = gdal.Open(S2_file)
+    for idx, bname in enumerate(getBandNames(S2_file)):
+        if bname == 'RED':
+            red = S2_ds.GetRasterBand(1 + idx).ReadAsArray()
+        elif bname in ('BROADNIR', 'BNR'):
+            nir = S2_ds.GetRasterBand(1 + idx).ReadAsArray()
+        else:
+            continue
+    ndvi_20 = (nir - red) / (nir + red)
+    ndvi_20_ma = np.where(ndvi_20 < 0, np.nan, ndvi_20)
+    ndvi_20_ma = np.ma.masked_invalid(ndvi_20)
+    ndvi_20_ma = np.ma.masked_where(ndvi_20_ma < 0, ndvi_20_ma)
+
+    LAI_np = 0.57*np.exp(2.33*ndvi_20)
+
+    # Leaf spectral properties:{rho_vis_C: visible reflectance, tau_vis_C: visible transmittance, rho_nir_C: NIR reflectance, tau_nir_C: NIR transmittance}
+    rho_vis_C=np.full(LAI_np.shape, 0.05, np.float32)
+    tau_vis_C=np.full(LAI_np.shape, 0.08, np.float32)
+    rho_nir_C=np.full(LAI_np.shape, 0.32, np.float32)
+    tau_nir_C=np.full(LAI_np.shape, 0.33, np.float32) 
+
+    f_c = np.ones_like(LAI_np, dtype=np.float32)
+
+
+    LAI_pos = np.where(LAI_np < 0, np.nan, LAI_np)
+ 
+    # canopy height
+    # if C_HEIGHT == 'lai':
+    #     hc = hc_from_lai(LAI_pos, hc_max = 1.2, lai_max = np.nanmax(LAI_np), hc_min=0)
+    # else:
+    hc = np.full(LAI_pos.shape, 1.2)
+
+    # temp measurement height
+    # if T_HEIGHT=='high':
+    #     z_T = 100
+    # else:
+    z_T = 2 
+
+    # estimate long wave irradiance
+    ea = meteo_utils.calc_vapor_pressure(T_K=dew_temp_20)
+    L_dn = calc_longwave_irradiance(ea = ea, t_a_k = air_temp_20, p = sp_20, z_T = z_T, h_C = hc) # ## does that make sense with the 100m!!!!!!!!!!!!!!!!!!!
+    d_0_0 = resistances.calc_d_0(h_C=hc)
+    z_0 = resistances.calc_z_0M(h_C=hc)
+
+
+    # calculate shortwave radiation of soil and canopy
+
+    # difvis, difnir, fvis, fnir = net_radiation.calc_difuse_ratio(S_dn = ssrd_20, sza = np.nanmean(szenith_20))
+    ssrd_1d = ssrd_20.ravel()
+    sza_1d  = szenith_20.ravel()
+    dem_arr= dem_sub.GetRasterBand(1).ReadAsArray()
+    press_1d = 1013.25 * np.exp(-dem_arr.ravel() / 8434.5)
+    difvis, difnir, fvis, fnir = net_radiation.calc_difuse_ratio(S_dn=ssrd_1d,sza=sza_1d,press=press_1d)
+
+    difvis = difvis.reshape(ssrd_20.shape)
+    difnir = difnir.reshape(ssrd_20.shape)
+    fvis   = fvis.reshape(ssrd_20.shape)
+    fnir   = fnir.reshape(ssrd_20.shape)
+
+
+    skyl = difvis * fvis + difnir * fnir
+    S_dn_dir = ssrd_20 * (1.0 - skyl)
+    S_dn_dif = ssrd_20 * skyl
+
+
+    # Soil spectral properties:{rho_vis_S: visible reflectance, rho_nir_S: NIR reflectance}
+    rho_vis_S=np.full(LAI_pos.shape, 0.07, np.float32)
+    rho_nir_S=np.full(LAI_pos.shape, 0.25, np.float32)
+
+    # F = local LAI
+    F = LAI_pos / 1
+    # calculate clumping index
+    Omega0 = clumping_index.calc_omega0_Kustas(LAI = LAI_np, f_C = f_c, x_LAD=1)
+    Omega = clumping_index.calc_omega_Kustas(Omega0, szenith_20)
+    LAI_eff = F * Omega
+
+    Sn_C, Sn_S = net_radiation.calc_Sn_Campbell(lai = LAI_pos, sza = szenith_20, S_dn_dir = S_dn_dir, S_dn_dif = S_dn_dif, fvis = fvis,
+                                        fnir = fnir, rho_leaf_vis = rho_vis_C, tau_leaf_vis = tau_vis_C, rho_leaf_nir = rho_nir_C, 
+                                        tau_leaf_nir = tau_nir_C, rsoilv = rho_vis_S, rsoiln = rho_nir_S, x_LAD=1, LAI_eff=LAI_eff)
+
+    # calculate other roughness stuff
+    # if LAND_C == 'fix':
+    landC = np.full(LAI_pos.shape, 11, dtype=np.int16)
+    # else:
+    #     unique_classes, inverse = np.unique(th_arr, return_inverse=True)
+    #     mapped = np.array([ROUGH_CLASSES_LKP.get(c, np.nan) for c in unique_classes])
+    #     print(mapped)
+    #     print(th_arr)
+    #     landC = mapped[inverse].reshape(th_arr.shape)
+
+    w_C = np.ones_like(LAI_pos, dtype=np.float32)
+    
+    # if bio:
+    #     z_0M, d = resistances.calc_roughness(LAI=LAI_pos, h_C=hc, w_C=w_C, landcover=landC, f_c=f_c)
+    # else:
+    fg = calc_fg_gutman(ndvi = ndvi_20_ma, ndvi_min = np.nanmin(ndvi_20), ndvi_max = np.nanmax(ndvi_20))
+    z_0M, d = resistances.calc_roughness(LAI=LAI_pos, h_C=hc, w_C=w_C, landcover=landC, f_c=None)
+    if printInterim:
+        # if bio == False:
+        #     npTOdisk(ndvi_20, LST_file, f'{temp_path_sub}ndvi_{id_tag}.tif')
+        #     npTOdisk(ndvi_20_ma, LST_file, f'{temp_path_sub}ndvi_pos_{id_tag}.tif')
+        npTOdisk(LAI_np, LST_file, f'{temp_path_sub}LAI_{id_tag}.tif')
+        npTOdisk(LAI_pos, LST_file, f'{temp_path_sub}LAI_pos_{id_tag}.tif')
+        npTOdisk(hc, LST_file, f'{temp_path_sub}canopy_height_{id_tag}.tif')
+        npTOdisk(ea, LST_file, f'{temp_path_sub}vapor_pressure_{id_tag}.tif')
+        npTOdisk(L_dn, LST_file, f'{temp_path_sub}longwave_radiation_{id_tag}.tif')
+        npTOdisk(d_0_0, LST_file, f'{temp_path_sub}resistanceD_{id_tag}.tif')
+        npTOdisk(z_0, LST_file, f'{temp_path_sub}resistanceZ_{id_tag}.tif')
+
+        npTOdisk(Omega0, LST_file, f'{temp_path_sub}Omega0_{id_tag}.tif')
+        npTOdisk(Omega, LST_file, f'{temp_path_sub}Omega_{id_tag}.tif')
+        npTOdisk(Sn_C, LST_file, f'{temp_path_sub}Sn_C_{id_tag}.tif')
+        npTOdisk(Sn_S, LST_file, f'{temp_path_sub}Sn_S_{id_tag}.tif')
+        npTOdisk(fg, LST_file, f'{temp_path_sub}fg_{id_tag}.tif')
+        npTOdisk(rho_vis_C, LST_file, f'{temp_path_sub}rho_vis_C_{id_tag}.tif')
+        npTOdisk(tau_vis_C, LST_file, f'{temp_path_sub}tau_vis_C_{id_tag}.tif')
+        npTOdisk(rho_nir_C, LST_file, f'{temp_path_sub}rho_nir_C_{id_tag}.tif')
+        npTOdisk(tau_nir_C, LST_file, f'{temp_path_sub}tau_nir_C_{id_tag}.tif')
+
+    emis_C = 0.98
+    emis_S = 0.95
+    h_C = hc 
+    z_u = 100
+
+    output = TSEB.TSEB_PT(lst_20, vza_20, air_temp_20, wind_speed_20, ea, sp_20, Sn_C, Sn_S, L_dn, LAI_pos, h_C, emis_C, emis_S, 
+    z_0M, d, z_u, z_T, resistance_form=None, calcG_params=None, const_L=None, f_g=fg,
+    kB=0.0, massman_profile=None, verbose=True)
+
+    # for stori, ssrd_ras in zip([[storPath_c, storPath_s],[storPath_c_f, storPath_s_f]], [ssrd_mean_calc_20, ssrd_mean_func_20]):    
+        # le_c = output[6]/ssrd_20
+        # heat_latent_scaled_c = ssrd_ras * le_c
+        # et_daily_c = TSEB.met.flux_2_evaporation(heat_latent_scaled_c, t_k=air_temp_20, time_domain=24)
+
+        # le_s = output[8]/ssrd_20
+        # heat_latent_scaled_s = ssrd_ras * le_s
+        # et_daily_s = TSEB.met.flux_2_evaporation(heat_latent_scaled_s, t_k=air_temp_20, time_domain=24)
+
+        # npTOdisk(et_daily_c, LST_file, stori[0])
+        # npTOdisk(et_daily_s, LST_file, stori[1])
+  
+    le_c = output[6]/ssrd_20
+    # heat_latent_scaled_c = ssrd_mean_func_20 * le_c
+    heat_latent_scaled_c = le_c * daily_energy_20 / 86400
+    et_daily_c = TSEB.met.flux_2_evaporation(heat_latent_scaled_c, t_k=air_temp_20, time_domain=24)
+
+    le_s = output[8]/ssrd_20
+    # heat_latent_scaled_s = ssrd_mean_func_20 * le_s
+    heat_latent_scaled_s = le_s * daily_energy_20 / 86400
+    et_daily_s = TSEB.met.flux_2_evaporation(heat_latent_scaled_s, t_k=air_temp_20, time_domain=24)
+
+    npTOdisk(et_daily_c, LST_file, storPath_c)
+    npTOdisk(et_daily_s, LST_file, storPath_s)
+
 
 def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_to_agro, path_to_force,
                path_to_lst, time_start, time_end, compList, predList, S2mask, printEvapInter=False, # path_to_inci, 
@@ -1384,16 +1807,17 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
     th_arr = th_ds.GetRasterBand(1).ReadAsArray()
     mask = np.where(th_arr == -9999, 0, 1)
 
-    if year in ['2018', '2022']:
-        colors = ['BLU', 'GRN', 'RED', 'BNR', 'NIR', 'RE1', 'RE2', 'RE3',  'SW1', 'SW2']
-    else:
-        colors = ['BLUE', 'GREEN', 'RED',  'BROADNIR', 'NIR', 'REDEDGE1', 'REDEDGE2', 'REDEDGE3', 'SWIR1', 'SWIR2']
+    # if year in ['2018', '2022']:
+    #     colors = ['BLU', 'GRN', 'RED', 'BNR', 'NIR', 'RE1', 'RE2', 'RE3',  'SW1', 'SW2']
+    # else:
+    colors = ['BLUE', 'GREEN', 'RED',  'BROADNIR', 'NIR', 'REDEDGE1', 'REDEDGE2', 'REDEDGE3', 'SWIR1', 'SWIR2']
     
     # ################ load force and vrt
     path_to_S2_tiles = f'{path_to_force}/{year}/'
     
     if para_mode == 'perTILE':
-        # get a list with all available tiles
+    #     # get a list with all available tiles
+        print('mode == perTIle')
         files = getFilelist(f'{path_to_S2_tiles}', '.tif', deep=True) 
         files = [file for file in files if tile_to_process in file]
         date_list = check_forceTSI_compositionDates(files)
@@ -1595,7 +2019,7 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
 
                     runEvapi(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
                             tempDir=trash_path, path_to_temp=temp_dump_fold, path_to_sharp=sharp_outFolder, mvwin=mvwin, cv=cv,
-                            regrat=regrat, evap_outFolder=evap_outFolder, S2path= S2_path, printInterim=printEvapInter, bio=bio_pars)
+                            regrat=regrat, evap_outFolder=evap_outFolder, S2path= S2_path, printInterim=printEvapInter)#, bio=bio_pars)
                 
                 
                 # at the end of the date loop --> clean up temp folder and sharp
@@ -1654,7 +2078,6 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
                 band = vrt.GetRasterBand(1+idz)
                 band.SetDescription(bname)
             vrt = None
-
 
             # determine LST and incidence files associated with respective S2 composite
             band_dict = transform_compositeDate_into_LSTbands(compDate, 4)
@@ -1850,7 +2273,7 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
 
                     runEvapi(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
                             tempDir=trash_path, path_to_temp=temp_dump_fold, path_to_sharp=sharp_outFolder, mvwin=mvwin, cv=cv,
-                            regrat=regrat, evap_outFolder=evap_outFolder, S2path=S2_path, printInterim=printEvapInter, bio=bio_pars)
+                            regrat=regrat, evap_outFolder=evap_outFolder, S2path=S2_path, printInterim=printEvapInter)#, bio=bio_pars)
                 
             
             killDates = [f"{year}_{v['month']}_{v['band']:02d}" for k, v in band_dict.items()]
@@ -2112,7 +2535,6 @@ def compute_fg_fipar_pai_claude(
  
     return fg, FIPAR, PAI
 
-
 def leaf_optics_vis(Cab):
     """
     Compute visible leaf reflectance and transmittance.
@@ -2133,7 +2555,6 @@ def leaf_optics_vis(Cab):
     tau = np.clip(tau, 0.0, 1.0)
 
     return rho, tau
-
 
 def leaf_optics_nir(Cw):
     """

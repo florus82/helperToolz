@@ -530,7 +530,6 @@ def Sharp_Evap_Sensi(tile_to_process, storFolder, path_to_slope, path_to_aspect,
 
                     # Sensitivity
                     bioL=[False, bio_pars] 
-                    print(bioL)
                     C_HEIGHTL=['lai','fix']
                     T_HEIGHTL=['high','low']
                     LAND_CL=['fix','th']
@@ -552,11 +551,11 @@ def Sharp_Evap_Sensi(tile_to_process, storFolder, path_to_slope, path_to_aspect,
                         if os.path.exists(storPath_c_f) and os.path.exists(storPath_s_f):
                             continue
                         else:
-                            runEvapi(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
+                            runEvapi_Sensi(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
                                     tempDir=trash_path, path_to_temp=temp_dump_fold, path_to_sharp=sharp_outFolder, mvwin=mvwin, cv=cv,
                                     regrat=regrat, evap_outFolder=evap_outFolder, S2path=S2_path, th_arr=th_arr, printInterim=printEvapInter,
                                     bio=bio, C_HEIGHT=C_HEIGHT, T_HEIGHT=T_HEIGHT, LAND_C=LAND_C)
-                    
+                
             
             killDates = [f"{year}_{v['month']}_{v['band']:02d}" for k, v in band_dict.items()]
 
