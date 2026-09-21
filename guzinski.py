@@ -172,12 +172,25 @@ def warp_ERA5_to_reference(grib_path, reference_path, output_path='MEM', bandL='
     proj = ref_ds.GetProjection()
 
     # Calculate bounds
-    xmin = gt[0]
-    ymax = gt[3]
-    xres = gt[1]
-    yres = -gt[5]
-    xmax = xmin + ref_ds.RasterXSize * xres
-    ymin = ymax - ref_ds.RasterYSize * yres
+    x0 = gt[0]
+    x1 = gt[0] + ref_ds.RasterXSize * gt[1]
+
+    y0 = gt[3]
+    y1 = gt[3] + ref_ds.RasterYSize * gt[5]
+
+    xmin = min(x0, x1)
+    xmax = max(x0, x1)
+    ymin = min(y0, y1)
+    ymax = max(y0, y1)
+
+    xres = abs(gt[1])
+    yres = abs(gt[5])
+    # xmin = gt[0]
+    # ymax = gt[3]
+    # xres = gt[1]
+    # yres = -gt[5]
+    # xmax = xmin + ref_ds.RasterXSize * xres
+    # ymin = ymax - ref_ds.RasterYSize * yres
 
     # translated_ds = gdal.Translate(
     # '',                     # output to memory
@@ -840,7 +853,7 @@ def runSharpi(highResFilename, lowResFilename, lowResMaskFilename, cv, movWin, r
                     "lowResGoodQualityFlags":     [1],
                     "cvHomogeneityThreshold":     cv,
                     "movingWindowSize":           movWin,
-                    "disaggregatingTemperature":  True}
+                    "disaggregatingTemperature":  False}
     dtOpts =     {"perLeafLinearRegression":    True,
                     "linearRegressionExtrapolationRatio": round(regrat, 2)}
     sknnOpts =   {'hidden_layer_sizes':         (10,),
@@ -1315,7 +1328,7 @@ def runEvapi_Sensi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir
     npTOdisk(et_daily_s, LST_file, storPath_s_f)
 
 def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path_to_temp,
-             path_to_sharp, mvwin, cv, regrat, evap_outFolder, S2path, th_arr=False, printInterim=False):
+             path_to_sharp, mvwin, cv, regrat, evap_outFolder, S2_file, th_arr=False, printInterim=False):
 
     storPath_c = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET_Canopy_func.tif'
     storPath_s = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET_Soil_func.tif'
@@ -1333,8 +1346,7 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
 
     # the geopotential is needed for the sharpening as well
     geopot_path = '/data/Aldhani/eoagritwin/et/Auxiliary/ERA5/tiff/low_res/geopotential/geopotential_low_res.tif' # epsg 4326
-    
-
+  
     # path_base to sharpenend folder and S2_comp
     sharp_pathbase = f'{path_to_sharp}Values/'
     s2_pathbase = path_to_temp
@@ -1349,7 +1361,425 @@ def runEvapi(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path
     LST_file = f'{sharp_pathbase}{comp}_{year}_{month}_{day:02d}_{mvwin}_{cv}_{regrat}_{s2Mask}_{sharp}_{lstMask}_{tile}.tif' 
     # for NDVI calculation (estimating LAI and others) and warping to S2 resolution, we use the S2 composite used for sharpening
     # S2_file = [file for file in getFilelist(s2_pathbase, 'vrt', deep=False) if f'HIGHRES_{comp}_{year}_{month}_{day:02d}' in file][0]
-    S2_file = S2path# [file for file in getFilelist(s2_pathbase, 'vrt', deep=True) if 'S2' in file][0]
+    # S2_file = S2path# [file for file in getFilelist(s2_pathbase, 'vrt', deep=True) if 'S2' in file][0]
+
+    # find era5 file that matches the month of LST observation
+    valid_variables = sorted(list(dict.fromkeys(file.split('/')[-2] for file in getFilelist(era5_path, '.grib', deep=True) \
+                                    if not any(var in file for var in ['geopotential', 'total_column_water_vapour']))))
+
+    # get a list for those era5 files that match the year and month of the provided LST acquisition file
+    era5_path_list = find_grib_file(getFilelist(era5_path, '.grib', deep=True), LST_acq_file)
+    era5_path_list = [path for path in era5_path_list if any(variable in path for variable in valid_variables)] # era5 are epsg 4326 and still will be after warping to doy
+    temp_pressure_checker(era5_path_list)
+
+    # warp datasets needed for calculations to the spatial extent of the sharpened LST
+    LST_acq_spatial_sub = warp_raster_to_reference(source_path=LST_acq_file, reference_path=S2_file, output_path='MEM', resampling='near')
+    VZA_at_acq_file_sub = warp_raster_to_reference(source_path=VZA_at_acq_file, reference_path=S2_file, output_path='MEM', resampling='near')
+    dem_sub = warp_raster_to_reference(source_path=dem_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+    slope_sub  = warp_raster_to_reference(source_path=slope_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+    aspect_sub = warp_raster_to_reference(source_path=aspect_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+    lat_sub = warp_raster_to_reference(source_path=lat_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+    lon_sub = warp_raster_to_reference(source_path=lon_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+    geopot_sub = warp_raster_to_reference(source_path=geopot_path, reference_path=S2_file, output_path='MEM', resampling='bilinear')
+
+    # print if needed
+    if printInterim:
+        if path_to_temp.endswith('/'):
+            temp_path_sub = path_safe(f"{path_to_temp}evap_interim/")
+        else:
+            temp_path_sub = path_safe(f"{path_to_temp}/evap_interim/")
+
+
+        id_tag = f'{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}'
+        LST_acq_spatial_arr = LST_acq_spatial_sub.GetRasterBand(day).ReadAsArray()
+        VZA_at_acq_file_arr = VZA_at_acq_file_sub.GetRasterBand(day).ReadAsArray()
+        dem_arr= dem_sub.GetRasterBand(1).ReadAsArray()
+        slope_arr = slope_sub.GetRasterBand(1).ReadAsArray()
+        aspect_arr = aspect_sub.GetRasterBand(1).ReadAsArray()
+        lat_arr = lat_sub.GetRasterBand(1).ReadAsArray()
+        lon_arr = lon_sub.GetRasterBand(1).ReadAsArray()
+        geopot_arr = geopot_sub.GetRasterBand(1).ReadAsArray()
+
+
+        npTOdisk(LST_acq_spatial_arr, S2_file, f'{temp_path_sub}LST_acq_spatial_sub_{id_tag}.tif', bands = 1, d_type=gdal.GDT_Int64)
+        npTOdisk(VZA_at_acq_file_arr, S2_file, f'{temp_path_sub}VZA_at_acq_file_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(dem_arr, S2_file, f'{temp_path_sub}dem_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(slope_arr, S2_file, f'{temp_path_sub}slope_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(aspect_arr, S2_file, f'{temp_path_sub}aspect_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(lat_arr, S2_file, f'{temp_path_sub}lat_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(lon_arr, S2_file, f'{temp_path_sub}lon_sub_{id_tag}.tif', bands = 1)
+        npTOdisk(geopot_arr, S2_file, f'{temp_path_sub}geopot_sub_{id_tag}.tif', bands = 1)
+
+    # load the era5 variable into cache at LST resolution and read-in the modelled times (one time step per band)
+    for path in era5_path_list:
+        # print(f'processing {path}')
+        # check if DEM sharpener needs to be applied
+        if '100m_u_component_of_wind' in path:
+            # do the warping without sharpening
+            try:
+                wind100_u = get_warped_ERA5_at_doy(path_to_era_grib=path, reference_path=LST_acq_spatial_sub, lst_acq_file=LST_acq_spatial_sub, doy=day)
+            except Exception as e:
+                with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                    f.write(f'{e}')
+                return
+
+        elif '100m_v_component_of_wind' in path:
+                # do the warping without sharpening
+            try:
+                wind100_v = get_warped_ERA5_at_doy(path_to_era_grib=path, reference_path=LST_acq_spatial_sub, lst_acq_file=LST_acq_spatial_sub, doy=day)
+            except Exception as e:
+                with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                    f.write(f'{e}')
+                return
+        # elif 'geopotential' in path:
+        #     # do the warping without sharpening
+        #     geopot = get_warped_ERA5_at_doy(path_to_era_grib=path, lst_acq_file=LST_acq_file, doy=day)
+
+        elif 'downward' in path: # terrain correction included
+            try:
+                ssrd, szenith, sazimuth, ssrd_nc, ssrd_mean_func, daily_energy = get_ssrdsc_warped_and_corrected_at_doy(
+                    path_to_ssrdsc_grib=path, reference_path=LST_acq_spatial_sub,
+                    lst_acq_file=LST_acq_spatial_sub, doy=day,
+                    slope_path=slope_sub,                             
+                                                       aspect_path=aspect_sub,
+                                                                                dem_path=dem_sub,
+                                                                                lat_path=lat_sub,
+                                                                                lon_path=lon_sub)
+            except Exception as e:
+                with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                    f.write(f'{e}')
+                return
+            
+        elif '2m_temperature' in path: # DEM and adiabatic sharpening, following Guzinski 2021
+            try:
+                air_temp = get_warped_ERA5_at_doy(path_to_era_grib=path, reference_path=LST_acq_spatial_sub, 
+                                                lst_acq_file=LST_acq_spatial_sub, doy=day,
+                                                sharp_blendheight=100,
+                                                sharp_DEM=dem_sub,
+                                                sharp_geopot=geopot_sub,
+                                                sharp_rate=STANDARD_ADIABAT,
+                                                sharpener='adiabatic')
+            except Exception as e:
+                with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                    f.write(f'{e}')
+                return
+            
+        elif '2m_dewpoint_temperature' in path: # DEM and adiabatic sharpening, following Guzinski 2021
+            try:
+                dew_temp = get_warped_ERA5_at_doy(path_to_era_grib=path, reference_path=LST_acq_spatial_sub, 
+                                                lst_acq_file=LST_acq_spatial_sub, doy=day,
+                                                sharp_blendheight=100,
+                                                sharp_DEM=dem_sub,
+                                                sharp_geopot=geopot_sub,
+                                                sharp_rate=MOIST_ADIABAT,
+                                                sharpener='adiabatic')
+            except Exception as e:
+                with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                    f.write(f'{e}')
+                return
+            
+        else: 
+            # do warping with DEM sharpening only
+            # sanity check
+            if not 'surface_pressure' in path:
+                raise ValueError('There is and unattended ERA5 variable in the loop - CHECK!!!!')
+            else:
+                try:
+                    sp = get_warped_ERA5_at_doy(path_to_era_grib=path, reference_path=LST_acq_spatial_sub, 
+                                                lst_acq_file=LST_acq_spatial_sub, doy=day,
+                                                sharp_DEM=dem_sub,
+                                                sharp_blendheight=100,
+                                                sharp_geopot=geopot_sub,
+                                                sharp_temp=air_temp,
+                                                sharpener='barometric') / 100
+                except Exception as e:
+                    with open(f'{tempDir}ERROR_{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET.log', 'a') as f:
+                        f.write(f'{e}')
+                    return
+          
+    wind_speed_20 = calc_wind_speed(wind100_u, wind100_v) # check wind_u
+    
+    # ds = gdal.Open(f'{ssrd_mean_path}surface_solar_radiation_downward_clear_sky_{year}_{int(MONTH_TO_02D[month])}')
+    # ssrd_mean = ds.GetRasterBand(day).ReadAsArray() / 3600
+    
+    # ssrd_mean_calc_20 = warp_np_to_reference(ssrd_mean, f'{ssrd_mean_path}surface_solar_radiation_downward_clear_sky_{year}_{int(MONTH_TO_02D[month])}', LST_file) # check this too!!!!!
+    ssrd_mean_func_20 = ssrd_mean_func
+    daily_energy_20 = daily_energy
+    ssrd_20 = ssrd
+    air_temp_20 = air_temp
+    dew_temp_20 = dew_temp
+    sp_20 = sp
+    szenith_20 = szenith
+    sazimuth_20 = sazimuth
+
+    # calculate windspeed
+
+    # load vza
+    vza_ds = VZA_at_acq_file_sub
+    vza_20 = vza_ds.GetRasterBand(day).ReadAsArray()
+
+    # load sharpened LST
+    lst_ds = gdal.Open(LST_file)
+    lst_20 =lst_ds.GetRasterBand(1).ReadAsArray()
+
+    del wind100_u, wind100_v, ssrd, air_temp, dew_temp, sp, szenith, sazimuth, ssrd_nc, ssrd_mean_func # , ssrd_mean
+
+    if printInterim:
+        # npTOdisk(ssrd_mean_calc_20, LST_file, f'{temp_path_sub}SSRD_mean_calc_{id_tag}.tif', bands = 1)
+        npTOdisk(ssrd_mean_func_20, LST_file, f'{temp_path_sub}SSRD_mean_func_{id_tag}.tif', bands = 1)
+        npTOdisk(daily_energy_20, LST_file, f'{temp_path_sub}Daily_Energy_{id_tag}.tif', bands = 1)
+        npTOdisk(ssrd_20, LST_file, f'{temp_path_sub}SSRD_{id_tag}.tif', bands = 1)
+        npTOdisk(air_temp_20, LST_file, f'{temp_path_sub}TEMP_{id_tag}.tif', bands = 1)
+        npTOdisk(dew_temp_20, LST_file, f'{temp_path_sub}DEW_{id_tag}.tif', bands = 1)
+        npTOdisk(sp_20, LST_file, f'{temp_path_sub}SP_{id_tag}.tif', bands = 1)
+        npTOdisk(szenith_20, LST_file, f'{temp_path_sub}ZEN_{id_tag}.tif', bands = 1)
+        npTOdisk(sazimuth_20, LST_file, f'{temp_path_sub}AZI_{id_tag}.tif', bands = 1)
+        npTOdisk(wind_speed_20, LST_file, f'{temp_path_sub}WSPEED_{id_tag}.tif', bands = 1)
+        npTOdisk(lst_20, LST_file, f'{temp_path_sub}LST_{id_tag}.tif', bands = 1)
+        npTOdisk(vza_20, LST_file, f'{temp_path_sub}VZA_{id_tag}.tif', bands = 1)
+
+    condition = (air_temp_20 > 0) & (dew_temp_20 > 0)  & (sp_20 > 0) & (szenith_20 > 0) & (sazimuth_20 > 0) & (wind_speed_20 > 0) & (lst_20 > 0) & (vza_20 > 0)
+    ssrd_20[~condition] = np.nan
+    daily_energy_20[~condition] = np.nan
+    ssrd_mean_func_20[~condition] = np.nan
+    air_temp_20[~condition] = np.nan
+    dew_temp_20[~condition] = np.nan
+    sp_20[~condition] = np.nan
+    szenith_20[~condition] = np.nan
+    sazimuth_20[~condition] = np.nan
+    wind_speed_20[~condition] = np.nan
+    # lst_20 = np.ma.masked_where(~condition, lst_20)
+    # vza_20 = np.ma.masked_where(~condition, vza_20)
+    lst_20[~condition] = np.nan
+    vza_20[~condition] = np.nan
+
+    if printInterim:
+        npTOdisk(daily_energy_20, LST_file, f'{temp_path_sub}Daily_Energy_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(ssrd_mean_func_20, LST_file, f'{temp_path_sub}SSRD_mean_func_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(ssrd_20, LST_file, f'{temp_path_sub}SSRD_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(air_temp_20, LST_file, f'{temp_path_sub}TEMP_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(dew_temp_20, LST_file, f'{temp_path_sub}DEW_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(sp_20, LST_file, f'{temp_path_sub}SP_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(szenith_20, LST_file, f'{temp_path_sub}ZEN_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(sazimuth_20, LST_file, f'{temp_path_sub}AZI_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(wind_speed_20, LST_file, f'{temp_path_sub}WSPEED_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(lst_20, LST_file, f'{temp_path_sub}LST_masked_{id_tag}.tif', bands = 1)
+        npTOdisk(vza_20, LST_file, f'{temp_path_sub}VZA_masked_{id_tag}.tif', bands = 1)
+
+    # if bio:
+    #     albedo, ccc, cwc, lai, fapar, fcover = read_biophys(bio, comp=comp)
+    #     theta = np.deg2rad(szenith_20)
+    #     theta_safe = np.clip(theta, 0.05, 1.0)
+
+    #     lai_min = 0.1
+    #     valid = lai > lai_min
+
+    #     Cab = np.full_like(lai, np.nan, dtype=float)
+    #     Cw  = np.full_like(lai, np.nan, dtype=float)
+
+    #     Cab[valid] = ccc[valid] / lai[valid]
+    #     Cw[valid]  = cwc[valid] / lai[valid]
+
+    #     fg, FIPAR, PAI = compute_fg_fipar_pai(
+    #         LAI=lai,
+    #         FAPAR=fapar,
+    #         theta=theta_safe)
+    #     LAI_np = lai
+
+    #     # Leaf spectral properties:{rho_vis_C: visible reflectance, tau_vis_C: visible transmittance, rho_nir_C: NIR reflectance, tau_nir_C: NIR transmittance}
+    #     Cab = ccc / np.maximum(lai, 1e-6)
+    #     Cw  = cwc / np.maximum(lai, 1e-6)
+    #     rho_vis_C, tau_vis_C = leaf_optics_vis(Cab)
+    #     rho_nir_C, tau_nir_C = leaf_optics_nir(Cw)
+
+    #     f_c = np.clip(fcover, 0.05, 0.99)
+    # else:
+
+    # calculate the NDVI from the S2 composite (following formula from force --> bandnames: (NIR - RED) / (NIR + RED))
+    S2_ds = gdal.Open(S2_file)
+    for idx, bname in enumerate(getBandNames(S2_file)):
+        if bname == 'RED':
+            red = S2_ds.GetRasterBand(1 + idx).ReadAsArray()
+        elif bname in ('BROADNIR', 'BNR'):
+            nir = S2_ds.GetRasterBand(1 + idx).ReadAsArray()
+        else:
+            continue
+    ndvi_20 = (nir - red) / (nir + red)
+    ndvi_20_ma = np.where(ndvi_20 < 0, np.nan, ndvi_20)
+    ndvi_20_ma = np.ma.masked_invalid(ndvi_20)
+    ndvi_20_ma = np.ma.masked_where(ndvi_20_ma < 0, ndvi_20_ma)
+
+    LAI_np = 0.57*np.exp(2.33*ndvi_20)
+
+    # Leaf spectral properties:{rho_vis_C: visible reflectance, tau_vis_C: visible transmittance, rho_nir_C: NIR reflectance, tau_nir_C: NIR transmittance}
+    rho_vis_C=np.full(LAI_np.shape, 0.05, np.float32)
+    tau_vis_C=np.full(LAI_np.shape, 0.08, np.float32)
+    rho_nir_C=np.full(LAI_np.shape, 0.32, np.float32)
+    tau_nir_C=np.full(LAI_np.shape, 0.33, np.float32) 
+
+    f_c = np.ones_like(LAI_np, dtype=np.float32)
+
+
+    LAI_pos = np.where(LAI_np < 0, np.nan, LAI_np)
+ 
+    # canopy height
+    # if C_HEIGHT == 'lai':
+    #     hc = hc_from_lai(LAI_pos, hc_max = 1.2, lai_max = np.nanmax(LAI_np), hc_min=0)
+    # else:
+    hc = np.full(LAI_pos.shape, 1.2)
+
+    # temp measurement height
+    # if T_HEIGHT=='high':
+    #     z_T = 100
+    # else:
+    z_T = 2 
+
+    # estimate long wave irradiance
+    ea = meteo_utils.calc_vapor_pressure(T_K=dew_temp_20)
+    L_dn = calc_longwave_irradiance(ea = ea, t_a_k = air_temp_20, p = sp_20, z_T = z_T, h_C = hc) # ## does that make sense with the 100m!!!!!!!!!!!!!!!!!!!
+    d_0_0 = resistances.calc_d_0(h_C=hc)
+    z_0 = resistances.calc_z_0M(h_C=hc)
+
+
+    # calculate shortwave radiation of soil and canopy
+
+    # difvis, difnir, fvis, fnir = net_radiation.calc_difuse_ratio(S_dn = ssrd_20, sza = np.nanmean(szenith_20))
+    ssrd_1d = ssrd_20.ravel()
+    sza_1d  = szenith_20.ravel()
+    dem_arr= dem_sub.GetRasterBand(1).ReadAsArray()
+    press_1d = 1013.25 * np.exp(-dem_arr.ravel() / 8434.5)
+    difvis, difnir, fvis, fnir = net_radiation.calc_difuse_ratio(S_dn=ssrd_1d,sza=sza_1d,press=press_1d)
+
+    difvis = difvis.reshape(ssrd_20.shape)
+    difnir = difnir.reshape(ssrd_20.shape)
+    fvis   = fvis.reshape(ssrd_20.shape)
+    fnir   = fnir.reshape(ssrd_20.shape)
+
+
+    skyl = difvis * fvis + difnir * fnir
+    S_dn_dir = ssrd_20 * (1.0 - skyl)
+    S_dn_dif = ssrd_20 * skyl
+
+
+    # Soil spectral properties:{rho_vis_S: visible reflectance, rho_nir_S: NIR reflectance}
+    rho_vis_S=np.full(LAI_pos.shape, 0.07, np.float32)
+    rho_nir_S=np.full(LAI_pos.shape, 0.25, np.float32)
+
+    # F = local LAI
+    F = LAI_pos / 1
+    # calculate clumping index
+    Omega0 = clumping_index.calc_omega0_Kustas(LAI = LAI_np, f_C = f_c, x_LAD=1)
+    Omega = clumping_index.calc_omega_Kustas(Omega0, szenith_20)
+    LAI_eff = F * Omega
+
+    Sn_C, Sn_S = net_radiation.calc_Sn_Campbell(lai = LAI_pos, sza = szenith_20, S_dn_dir = S_dn_dir, S_dn_dif = S_dn_dif, fvis = fvis,
+                                        fnir = fnir, rho_leaf_vis = rho_vis_C, tau_leaf_vis = tau_vis_C, rho_leaf_nir = rho_nir_C, 
+                                        tau_leaf_nir = tau_nir_C, rsoilv = rho_vis_S, rsoiln = rho_nir_S, x_LAD=1, LAI_eff=LAI_eff)
+
+    # calculate other roughness stuff
+    # if LAND_C == 'fix':
+    landC = np.full(LAI_pos.shape, 11, dtype=np.int16)
+    # else:
+    #     unique_classes, inverse = np.unique(th_arr, return_inverse=True)
+    #     mapped = np.array([ROUGH_CLASSES_LKP.get(c, np.nan) for c in unique_classes])
+    #     print(mapped)
+    #     print(th_arr)
+    #     landC = mapped[inverse].reshape(th_arr.shape)
+
+    w_C = np.ones_like(LAI_pos, dtype=np.float32)
+    
+    # if bio:
+    #     z_0M, d = resistances.calc_roughness(LAI=LAI_pos, h_C=hc, w_C=w_C, landcover=landC, f_c=f_c)
+    # else:
+    fg = calc_fg_gutman(ndvi = ndvi_20_ma, ndvi_min = np.nanmin(ndvi_20), ndvi_max = np.nanmax(ndvi_20))
+    z_0M, d = resistances.calc_roughness(LAI=LAI_pos, h_C=hc, w_C=w_C, landcover=landC, f_c=None)
+    if printInterim:
+        # if bio == False:
+        #     npTOdisk(ndvi_20, LST_file, f'{temp_path_sub}ndvi_{id_tag}.tif')
+        #     npTOdisk(ndvi_20_ma, LST_file, f'{temp_path_sub}ndvi_pos_{id_tag}.tif')
+        npTOdisk(LAI_np, LST_file, f'{temp_path_sub}LAI_{id_tag}.tif')
+        npTOdisk(LAI_pos, LST_file, f'{temp_path_sub}LAI_pos_{id_tag}.tif')
+        npTOdisk(hc, LST_file, f'{temp_path_sub}canopy_height_{id_tag}.tif')
+        npTOdisk(ea, LST_file, f'{temp_path_sub}vapor_pressure_{id_tag}.tif')
+        npTOdisk(L_dn, LST_file, f'{temp_path_sub}longwave_radiation_{id_tag}.tif')
+        npTOdisk(d_0_0, LST_file, f'{temp_path_sub}resistanceD_{id_tag}.tif')
+        npTOdisk(z_0, LST_file, f'{temp_path_sub}resistanceZ_{id_tag}.tif')
+
+        npTOdisk(Omega0, LST_file, f'{temp_path_sub}Omega0_{id_tag}.tif')
+        npTOdisk(Omega, LST_file, f'{temp_path_sub}Omega_{id_tag}.tif')
+        npTOdisk(Sn_C, LST_file, f'{temp_path_sub}Sn_C_{id_tag}.tif')
+        npTOdisk(Sn_S, LST_file, f'{temp_path_sub}Sn_S_{id_tag}.tif')
+        npTOdisk(fg, LST_file, f'{temp_path_sub}fg_{id_tag}.tif')
+        npTOdisk(rho_vis_C, LST_file, f'{temp_path_sub}rho_vis_C_{id_tag}.tif')
+        npTOdisk(tau_vis_C, LST_file, f'{temp_path_sub}tau_vis_C_{id_tag}.tif')
+        npTOdisk(rho_nir_C, LST_file, f'{temp_path_sub}rho_nir_C_{id_tag}.tif')
+        npTOdisk(tau_nir_C, LST_file, f'{temp_path_sub}tau_nir_C_{id_tag}.tif')
+
+    emis_C = 0.98
+    emis_S = 0.95
+    h_C = hc 
+    z_u = 100
+
+    output = TSEB.TSEB_PT(lst_20, vza_20, air_temp_20, wind_speed_20, ea, sp_20, Sn_C, Sn_S, L_dn, LAI_pos, h_C, emis_C, emis_S, 
+    z_0M, d, z_u, z_T, resistance_form=None, calcG_params=None, const_L=None, f_g=fg,
+    kB=0.0, massman_profile=None, verbose=True)
+
+    # for stori, ssrd_ras in zip([[storPath_c, storPath_s],[storPath_c_f, storPath_s_f]], [ssrd_mean_calc_20, ssrd_mean_func_20]):    
+        # le_c = output[6]/ssrd_20
+        # heat_latent_scaled_c = ssrd_ras * le_c
+        # et_daily_c = TSEB.met.flux_2_evaporation(heat_latent_scaled_c, t_k=air_temp_20, time_domain=24)
+
+        # le_s = output[8]/ssrd_20
+        # heat_latent_scaled_s = ssrd_ras * le_s
+        # et_daily_s = TSEB.met.flux_2_evaporation(heat_latent_scaled_s, t_k=air_temp_20, time_domain=24)
+
+        # npTOdisk(et_daily_c, LST_file, stori[0])
+        # npTOdisk(et_daily_s, LST_file, stori[1])
+  
+    le_c = output[6]/ssrd_20
+    # heat_latent_scaled_c = ssrd_mean_func_20 * le_c
+    heat_latent_scaled_c = le_c * daily_energy_20 / 86400
+    et_daily_c = TSEB.met.flux_2_evaporation(heat_latent_scaled_c, t_k=air_temp_20, time_domain=24)
+
+    le_s = output[8]/ssrd_20
+    # heat_latent_scaled_s = ssrd_mean_func_20 * le_s
+    heat_latent_scaled_s = le_s * daily_energy_20 / 86400
+    et_daily_s = TSEB.met.flux_2_evaporation(heat_latent_scaled_s, t_k=air_temp_20, time_domain=24)
+
+    npTOdisk(et_daily_c, LST_file, storPath_c)
+    npTOdisk(et_daily_s, LST_file, storPath_s)
+
+def runEvapi_Production(year, month, day, comp, sharp, s2Mask, lstMask, tile, tempDir, path_to_temp,
+             path_to_sharp, mvwin, cv, regrat, evap_outFolder, S2_file, th_arr=False, printInterim=False):
+
+    storPath_c = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET_Canopy_func.tif'
+    storPath_s = f'{evap_outFolder}{comp}_{year}_{month}_{day}_{mvwin}_{cv}_{regrat}_{lstMask}_{s2Mask}_{sharp}_{tile}_ET_Soil_func.tif'
+
+    # path to era5 raw data
+    era5_path = '/data/Aldhani/eoagritwin/et/Auxiliary/ERA5/grib/'
+    # ssrd_mean_path = '/data/Aldhani/eoagritwin/et/Auxiliary/ERA5/ssrd_mean_calc/'
+
+    # the DEM, SLOPE, ASPECT, LAT, LON will be used to sharpen some of the era5 variables (the the resolution of the DEM)
+    dem_path = '/data/Aldhani/eoagritwin/et/Auxiliary/DEM/vrt_and_derivates/DEM_GER.vrt' # epsg 4326
+    slope_path = '/data/Aldhani/eoagritwin/et/Auxiliary/DEM/vrt_and_derivates/SLOPE_GER_FORCE.tif' # epsg 4326
+    aspect_path = '/data/Aldhani/eoagritwin/et/Auxiliary/DEM/vrt_and_derivates/ASPECT_GER_FORCE.tif' # epsg 4326
+    lat_path = '/data/Aldhani/eoagritwin/et/Auxiliary/DEM/vrt_and_derivates/LAT_GER.tif' # epsg 4326
+    lon_path = '/data/Aldhani/eoagritwin/et/Auxiliary/DEM/vrt_and_derivates/LON_GER.tif' # epsg 4326
+
+    # the geopotential is needed for the sharpening as well
+    geopot_path = '/data/Aldhani/eoagritwin/et/Auxiliary/ERA5/tiff/low_res_rss/geopotential/geopotential_low_res_rss.tif' # epsg 4326
+    
+    # path_base to sharpenend folder and S2_comp
+    sharp_pathbase = f'{path_to_sharp}Values/'
+
+    # the LST acquisition time should determine which sharpened LST files are associatedto be processed (as they are associated with it)
+    LST_acq_file = f'/data/Aldhani/eoagritwin/et/Z_REPO_TEST/Sentinel3/Acq_time/{year}/Daily_AcqTime_{comp}_{year}_{month}.tif' # epsg 4326
+
+    # the VZA at the time of LST acquisition is need
+    VZA_at_acq_file = f'/data/Aldhani/eoagritwin/et/Z_REPO_TEST/Sentinel3/VZA/{comp}/{year}/Daily_VZA_{comp}_{year}_{month}.tif' # epsg 4326
+
+    # sharpened LST
+    LST_file = f'{sharp_pathbase}{comp}_{year}_{month}_{day:02d}_{mvwin}_{cv}_{regrat}_{s2Mask}_{sharp}_{lstMask}_{tile}.tif' 
 
     # find era5 file that matches the month of LST observation
     valid_variables = sorted(list(dict.fromkeys(file.split('/')[-2] for file in getFilelist(era5_path, '.grib', deep=True) \
@@ -1758,12 +2188,12 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
     thuenen = [file for file in getFilelist(path_to_agro, '.tif') if tile_to_process in file and year in file] # if any tile name is in file
     
     if(len(thuenen)) == 0:
-        thuenen = [file for file in getFilelist(path_to_agro, '.tif') if tile_to_process in file and '2021' in file]
+        thuenen = [file for file in getFilelist(path_to_agro, '.tif') if tile_to_process in file and '2025' in file]
         
-    if not thuenen:
-        raise FileNotFoundError(
-            f"No THUENEN files for tile={tile_to_process}, year={year}"
-        )
+    # if not thuenen:
+    #     raise FileNotFoundError(
+    #         f"No THUENEN files for tile={tile_to_process}, year={year}"
+    #     )
     
     # get those tiles (and composite if more than one tile is provided)
     if compDate: # if parallel over Dates, problem with multiple access on vrts might occur --> different vrts per compDate
@@ -1987,9 +2417,12 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
                                         if (os.path.exists(f"{file_name}_ET_Canopy_func.tif") and os.path.exists(f"{file_name}_ET_Soil_func.tif")):
                                             print(f"{file_name} already created")
                                             continue
-
-                                        runSharpi(highResFilename, lowResFilename, lowResMaskFilename, cv, movWin, regrat, sharpened_file, useDecisionTree = True)
-                                        
+                                        try:
+                                            runSharpi(highResFilename, lowResFilename, lowResMaskFilename, cv, movWin, regrat, sharpened_file, useDecisionTree = True)
+                                        except Exception:
+                                            print("FAILED highRes:", highResFilename, flush=True)
+                                            print("FAILED lowRes:", lowResFilename, flush=True)
+                                            raise
                                         # run the biophysical parameter calculation here
                                         
                                         # should run the function and return a list with the paths for all the created files
@@ -2038,7 +2471,7 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
                 sharp_files = [file for file in getFilelist(sharp_outFolder, '.tif', deep=True)]
                 [os.remove(file) for file in temp_files_vrt]
                 [os.remove(file) for file in temp_files_tif]
-                [os.remove(file) for file in sharp_files]
+                #[os.remove(file) for file in sharp_files]
 
             
                 # export the processed dates
@@ -2240,9 +2673,12 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
                                     # if (os.path.exists(f"{file_name}_ET_Canopy_func.tif") and os.path.exists(f"{file_name}_ET_Soil_func.tif")):
                                     #     print(f"{file_name} already created")
                                     #     continue
-
+                                    #try:
                                     runSharpi(highResFilename, lowResFilename, lowResMaskFilename, cv, movWin, regrat, sharpened_file, useDecisionTree = True)
-                                    
+                                    # except:
+                                    #         print("FAILED highRes:", highResFilename, flush=True)
+                                    #         print("FAILED lowRes:", lowResFilename, flush=True)
+                                    #         raise
                                     # run the biophysical parameter calculation here
                                     
                                     # should run the function and return a list with the paths for all the created files
@@ -2273,7 +2709,7 @@ def Sharp_Evap(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_
 
                     runEvapi(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
                             tempDir=trash_path, path_to_temp=temp_dump_fold, path_to_sharp=sharp_outFolder, mvwin=mvwin, cv=cv,
-                            regrat=regrat, evap_outFolder=evap_outFolder, S2path=S2_path, printInterim=printEvapInter)#, bio=bio_pars)
+                            regrat=regrat, evap_outFolder=evap_outFolder, S2_file=S2_path, printInterim=printEvapInter)#, bio=bio_pars)
                 
             
             killDates = [f"{year}_{v['month']}_{v['band']:02d}" for k, v in band_dict.items()]
@@ -2732,4 +3168,298 @@ def calc_Incidence(tile, year, comp, outFolder, time_dict):
                                             comp=False)
     else:
         raise ValueError('Sth wrong with the time_dict!!')
+
+def Sharp_Evap_Production(tile_to_process, storFolder, path_to_slope, path_to_aspect, path_to_agro, path_to_force,
+               path_to_lst, time_start, time_end, compList, predList, S2mask, printEvapInter=False, # path_to_inci, 
+               path_to_dem=False, path_to_lat=False, path_to_lon=False, path_to_acq=False, path_to_vaa=False, path_to_vza=False, 
+               para_mode='perTILE', compDate=False):
+
+    temp_dump_fold = path_safe(f"{storFolder}temp/{tile_to_process.replace('_', '')}/")
+    sharp_outFolder = path_safe(f"{storFolder}sharpened/{tile_to_process.replace('_', '')}/")
+    trash_path = path_safe(f"{storFolder}trash/")
+    evap_outFolder = path_safe(f"{storFolder}evap/{tile_to_process.replace('_', '')}/")
     
+    year = time_start[:4]
+
+    # ############## make vrts for slope, aspect and agromask
+    slopes = [file for file in getFilelist(path_to_slope, '.tif') if tile_to_process in file] # if any tile name is in file
+    # aspect-tiles
+    aspects = [file for file in getFilelist(path_to_aspect, '.tif') if tile_to_process in file] # if any tile name is in file
+    # thuenen-tiles
+    thuenen = [file for file in getFilelist(path_to_agro, '.tif') if tile_to_process in file and year in file] # if any tile name is in file
+    
+    if(len(thuenen)) == 0:
+        thuenen = [file for file in getFilelist(path_to_agro, '.tif') if tile_to_process in file and '2025' in file]
+
+    # get those tiles (and composite if more than one tile is provided)
+    if compDate: # if parallel over Dates, problem with multiple access on vrts might occur --> different vrts per compDate
+        slope_path = f"{temp_dump_fold}SLOPE_{year}_{compDate}.vrt"
+        thuenen_path = f"{temp_dump_fold}THUENEN_{year}_{compDate}.vrt"
+        aspect_path = f"{temp_dump_fold}ASPECT_{year}_{compDate}.vrt"
+    else:
+        slope_path = f"{temp_dump_fold}SLOPE_{year}.vrt"
+        thuenen_path = f"{temp_dump_fold}THUENEN_{year}.vrt"
+        aspect_path = f"{temp_dump_fold}ASPECT_{year}.vrt"
+
+    gdal.BuildVRT(slope_path, slopes)
+    gdal.BuildVRT(aspect_path, aspects)
+    gdal.BuildVRT(thuenen_path, thuenen)
+
+    # make the mask ready for S2 masking
+    th_ds = gdal.Open(thuenen_path)
+    th_arr = th_ds.GetRasterBand(1).ReadAsArray()
+    mask = np.where(th_arr == -9999, 0, 1)
+
+    colors = ['BLUE', 'GREEN', 'RED',  'BROADNIR', 'NIR', 'REDEDGE1', 'REDEDGE2', 'REDEDGE3', 'SWIR1', 'SWIR2']
+    
+    # ################ load force and vrt
+    if compDate == False:
+        print('NO SINGLE DATE PROVIDED - THIS PROCESS WILL CRASH SOON :(')
+    
+    compdate_path = f"{evap_outFolder}compdates_{compDate}.csv"
+
+    if int(time_start) <= int(compDate) <= int(time_end): # neede to be adapted in a manner that incorporates the +/-4 otherwise time_start 20190401 
+        # would find date 20190406 as int(time_start) <= int(date) <= int(time_end)..
+
+        lowRes_files = []
+        highRes_files = []
+        highRes_names = []
+        sharpList = []
+
+        # get S2 bands
+        tilesS2 = [file for file in getFilelist(path_to_force, '.tif', deep=True) if tile_to_process in file and f'{compDate}.tif' in file]
+        tilesS2 = [t2 for col in colors for t2 in tilesS2 if f"_{col}_" in t2]
+        S2_path = f'{temp_dump_fold}S2_{compDate}.vrt'
+        
+        # build vrt
+        tmp_vrt = f"{S2_path}.tmp"
+        try:
+            vrt = gdal.BuildVRT(tmp_vrt, tilesS2, separate=True)
+        except:
+            print(tilesS2)
+            print(tile_to_process)
+            raise()
+        vrt = None
+        os.rename(tmp_vrt, S2_path)   # atomic operation --> this ensures, that vrt fully written before accessed (parallel crap)
+        # vrt = gdal.BuildVRT(S2_path, tilesS2, separate=True)
+        # vrt = None
+        vrt = gdal.Open(S2_path, gdal.GA_Update)  # VRT must be writable
+        for idz, bname in enumerate(colors): 
+            band = vrt.GetRasterBand(1+idz)
+            band.SetDescription(bname)
+        vrt = None
+
+        # determine LST and incidence files associated with respective S2 composite
+        band_dict = transform_compositeDate_into_LSTbands(compDate, 4)
+
+        # stat used for compositing
+        for comp_stat in compList: #  
+
+            # get all LST bands that can be sharped with the S2 composite at this date (and sun angle incidence files as well, as they are dependent on that date
+            for k, v in band_dict.items(): # basically, this is a loop over the days 
+                month = v['month']
+                band = int(v['band'])
+                    
+                # export the LST for that day
+                daily_lst_path = f'{temp_dump_fold}Daily_LST_{comp_stat}_{year}_{month}_{band:02d}.tif'
+                if os.path.exists(daily_lst_path):
+                    pass
+                else:
+                    v_path = f'{path_to_lst}Daily_LST_{comp_stat}_{year}_{month}.tif'
+                    if not os.path.exists(v_path):
+                        print(f"LST composite for {v_path} is missing - skipping day")
+                        continue
+
+                    ds = gdal.Open(v_path, 0)
+                    LST_arr = ds.GetRasterBand(band).ReadAsArray() # store as single Tiff in temp
+                    makeTif_np_to_matching_tif(LST_arr, v_path, daily_lst_path)
+            
+
+                # create highRes file through exapnding the vrt of S2
+                highRes_path = f"{temp_dump_fold}HIGHRES_{comp_stat}_{year}_{month}_{band:02d}.vrt"
+                skipper_counter = 0
+                for predi in predList: # different predictor combinations for the sharpening
+                    skip_pred = 0
+                    skip_sharp = 0
+
+                    # first check if already sharpened or evaped
+                    if S2mask == 1:
+                        expected_evap_files = [
+                            f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                            f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Soil_func.tif"
+                        ]
+                        expected_sharp_files = [
+                            f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}.tif"
+                        ]
+                    elif S2mask == 2:
+                        expected_evap_files = [
+                            f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                            f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Soil_func.tif"
+                        ]
+                        expected_sharp_files = [
+                            f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}.tif"
+                        ]
+                    elif S2mask == 3:
+                        expected_evap_files = [
+                            f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                            f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET_Soil_func.tif",
+                            f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Canopy_func.tif",
+                            f"{evap_outFolder}{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET_Soil_func.tif"
+                        ]
+                        expected_sharp_files = [
+                            f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}.tif",
+                            f"{sharp_outFolder}Values/{comp_stat}_{year}_{month}_{band:02d}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}.tif"
+                        ]
+                    
+                    if all(os.path.exists(path) for path in expected_evap_files):
+                        print('combi already processed', flush=True)
+                        skip_pred = 1
+                        skipper_counter += 1
+
+                    elif any(os.path.exists(errorlog) for errorlog in 
+                                [f"{trash_path}ERROR_{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2notMasked_{predi}_{tile_to_process}_ET.log",
+                                f"{trash_path}ERROR_{comp_stat}_{year}_{month}_{band}_mvwin15_cv0_regrat25_withoutLSTmask_S2Masked_{predi}_{tile_to_process}_ET.log"]):
+                        print('evaping this day not possible')
+                        skip_pred = 1
+                        skipper_counter += 1
+
+                    else:
+                        # think about incorporating here a sharpener check! tricky part will be passing on the file into the sharpList
+                        # maybe passing the proper name into list -> highRes_files, and then do a final check before sharpening
+                        if all(os.path.exists(path) for path in expected_sharp_files):
+                            print('combi already shapred - pass on to evap queue', flush=True)
+                            for sharpedFile in expected_sharp_files:
+                                sharpList.append(sharpedFile)
+                                print(sharpedFile)
+                            skip_sharp = 1
+
+                    if skip_sharp or skip_pred == 1:
+                        continue
+                    if predi == 'allpred':
+                        # calculate incidence    
+                        calc_Incidence(tile=tile_to_process, year=year, comp=comp_stat, outFolder=temp_dump_fold, time_dict=band_dict) 
+                        incid_path = f'{temp_dump_fold}INCIDENCE_{comp_stat}_{year}_{month}_{band:02d}.tif'
+                        gdal.BuildVRT(highRes_path, [S2_path, slope_path, aspect_path, incid_path], separate=True)
+                        maskVRT_water(highRes_path, colorlist=colors)
+                    else:
+                        gdal.BuildVRT(highRes_path, [S2_path], separate=True)
+                        maskVRT_water(highRes_path, colorlist=colors)
+                        # maskVRT_water_and_drop_aux(highRes_path, colorlist=colors)
+
+                    if S2mask == 1:
+                        highRes_files.append(f"{highRes_path.split('.')[0]}_watermask.tif")
+                        highRes_names.append(f'S2notMasked_{predi}')
+                        lowRes_files.append(daily_lst_path)
+
+                    elif S2mask == 2:
+                        maskVRT(f"{highRes_path.split('.')[0]}_watermask.tif", mask, suffix=f"_S2_agromask_{predi}")
+                        os.remove(f"{highRes_path.split('.')[0]}_watermask.tif")
+                        highRes_files.append(f"{highRes_path.split('.')[0]}_watermask_S2_agromask_{predi}.tif")
+                        lowRes_files.append(daily_lst_path)
+                        highRes_names.append(f"S2Masked_{predi}")
+
+                    elif S2mask == 3:
+                        highRes_files.append(f"{highRes_path.split('.')[0]}_watermask.tif")
+                        highRes_names.append(f"S2notMasked_{predi}")
+                        lowRes_files.append(daily_lst_path)
+                        maskVRT(f"{highRes_path.split('.')[0]}_watermask.tif", mask, suffix=f"_S2_agromask_{predi}")
+                        highRes_files.append(f"{highRes_path.split('.')[0]}_watermask_S2_agromask_{predi}.tif")
+                        lowRes_files.append(daily_lst_path)
+                        highRes_names.append(f"S2Masked_{predi}")
+                if skipper_counter != len(predList): # i.e. not every pred was skipped. therefore check if biophys calc is needed for that day
+                    if path_to_dem:
+                        # calculate biophysical helper and parameter
+                        try:
+                            calc_biophys_helper(acq_path=path_to_acq, dem_path=dem_path, lat_path=lat_path, lon_path=lon_path,
+                                                vaa_path=path_to_vaa, vza_path=path_to_vza, year=year, month=month,
+                                                doy=band, outPath=temp_dump_fold, comp_stat=comp_stat)
+                        except Exception as e:
+                            print(f'broken because: {e} path_dem={path_to_dem} comp={comp_stat} month={month} day={band} tile={tile_to_process}')
+                            break
+
+                        get_biophysical_parameter(path_S2=tilesS2, path_Sun=f"{temp_dump_fold}sun/", year=year, month=month, doy=band,
+                                                outPath=temp_dump_fold, comp_stat=comp_stat)
+        if len(highRes_files) != 0:
+            for idx, highResFilename in enumerate(highRes_files):
+                lowResFilename = lowRes_files[idx]
+                # f1 = f'{sharp_outFolder}{'/'.join(highResFilename.split('.')[0].split('_')[2:5])}/'
+                for maskname, mask_lowRes in zip(['withoutLSTmask'], ['']): # 'withLSTmask'  lowmask_bin_path
+                # for maskname, mask_lowRes in zip(['withoutLSTmask', 'withLSTmask'], ['', lowmask_bin_path]):
+                    lowResMaskFilename = mask_lowRes
+                    # f2 = f'{f1}{maskname}/'
+                    for movWin in [15]:
+                        for cv in [0]:
+                            for regrat in [0.25]:
+                                kombi = f'mvwin{movWin}_cv{cv}_regrat{int(regrat*100):02d}_{highRes_names[idx]}_{maskname}'
+                                # f3 = f'{f2}{highRes_names[idx]}/'
+                                # os.makedirs(f'{f3}Residuals/', exist_ok=True)
+                                # os.makedirs(f'{f3}Values/', exist_ok=True)
+
+                                os.makedirs(f"{sharp_outFolder}Residuals/", exist_ok=True)
+                                os.makedirs(f"{sharp_outFolder}Values/", exist_ok=True)
+                                
+                                # sharpened_file = f'{f3}{'_'.join(highResFilename.split('.')[0].split('_')[2:6])}_{kombi}_{tile_to_process}.tif'
+                                sharpened_file = f"{sharp_outFolder}{'_'.join(highResFilename.split('.')[0].split('_')[1:5])}_{kombi}_{tile_to_process}.tif"
+                                
+                                # check if evap file for sharpened_file already exists (might happen when we restart a process that terminated unexpectedly
+                                # before and now we go through the last date from datelist that had been processed)
+                                # file_name = f"{evap_outFolder}{sharpened_file.split('/')[-1].split('_')[0]}_{sharpened_file.split('/')[-1].split('_')[1]}\
+                                #     _{sharpened_file.split('/')[-1].split('_')[2]}_{int(sharpened_file.split('/')[-1].split('_')[3])}_{movWin}_{cv}_{regrat}_\
+                                #         {sharpened_file.split('/')[-1].split('_')[9]}_{sharpened_file.split('/')[-1].split('_')[7]}_\
+                                #             {sharpened_file.split('/')[-1].split('_')[8]}_{tile_to_process}"
+                                
+
+                                # if (os.path.exists(f"{file_name}_ET_Canopy_func.tif") and os.path.exists(f"{file_name}_ET_Soil_func.tif")):
+                                #     print(f"{file_name} already created")
+                                #     continue
+                                #try:
+                                runSharpi(highResFilename, lowResFilename, lowResMaskFilename, cv, movWin, regrat, sharpened_file, useDecisionTree = True)
+                                # except:
+                                #         print("FAILED highRes:", highResFilename, flush=True)
+                                #         print("FAILED lowRes:", lowResFilename, flush=True)
+                                #         raise
+                                # run the biophysical parameter calculation here
+                                
+                                # should run the function and return a list with the paths for all the created files
+                                # this list will then be passed on to runEvapi
+                                sharpList.append(sharpened_file)
+
+        if len(sharpList) != 0:   
+            # calc evapo for all compstats at that day
+            for sharped in sharpList:
+                comp = sharped.split('/')[-1].split('_')[0]
+                year = sharped.split('/')[-1].split('_')[1]
+                month = sharped.split('/')[-1].split('_')[2]
+                day = int(sharped.split('/')[-1].split('_')[3])
+                mvwin = sharped.split('/')[-1].split('_')[4]
+                cv = sharped.split('/')[-1].split('_')[5]
+                regrat = sharped.split('/')[-1].split('_')[6]
+                sharp = sharped.split('/')[-1].split('_')[8]
+                s2Mask = sharped.split('/')[-1].split('_')[7]
+                lstMask = sharped.split('/')[-1].split('_')[9]
+                tile = '_'.join(sharped.split('/')[-1].split('.')[0].split('_')[-2:])
+
+                if path_to_dem:
+                    bio_pars = [file for file in getFilelist(f'{temp_dump_fold}bio/', '.tif') if f'{year}_{month}_{day}.tif' in file]
+                else:
+                    bio_pars = False
+
+                
+
+                runEvapi_Production(year=year, month=month, day=day, comp=comp, sharp=sharp, s2Mask=s2Mask, lstMask=lstMask, tile=tile,
+                        tempDir=trash_path, path_to_temp=temp_dump_fold, path_to_sharp=sharp_outFolder, mvwin=mvwin, cv=cv,
+                        regrat=regrat, evap_outFolder=evap_outFolder, S2_file=S2_path, printInterim=printEvapInter)#, bio=bio_pars)
+            
+        
+        killDates = [f"{year}_{v['month']}_{v['band']:02d}" for k, v in band_dict.items()]
+
+        [os.remove(file) for file in getFilelist(temp_dump_fold, '.vrt') if any(kill in file for kill in killDates)]
+        [os.remove(file) for file in getFilelist(temp_dump_fold, '.tif') if any(kill in file for kill in killDates)]
+        [os.remove(file) for file in getFilelist(sharp_outFolder, '.tif', deep=True) if any(kill in file for kill in killDates)]
+
+    
+        # export the processed dates
+        df = pd.DataFrame({
+            'compdates': [compDate],
+            })
+        df.to_csv(compdate_path, index=False)
